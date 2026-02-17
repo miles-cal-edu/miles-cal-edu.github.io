@@ -1,0 +1,8 @@
+{
+    "compilerOptions": {
+      "target": "es2015",
+      "checkJs": true,
+      "moduleResolution": "node"
+    },
+    "include": ["./**/*.js", "./**/*.d.ts"]
+  }
