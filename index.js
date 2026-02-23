@@ -61,16 +61,20 @@ function renderSidebar() {
                     const e = environments[i + 1];
                     if (e) {
                         e.layer.hide();
+                        e.uLayer.hide();
                     }
                 }
                 environment.layer.show();
+                environment.uLayer.show();
             });
             stage.add(environment.layer);
+            stage.add(environment.uLayer);
             if (!environment.started) {
                 environment.started = true;
                 environment.start();
             }
             environment.layer.hide();
+            environment.uLayer.hide();
         }
         sidebarList.appendChild(el);
     });
@@ -116,7 +120,6 @@ const stage = new Konva.Stage({
     container: 'konva-container',
     width: canvasArea.offsetWidth,
     height: canvasArea.offsetHeight,
-    draggable: false,
 });
 
 // Track mouse position
@@ -131,6 +134,7 @@ stage.on('mousemove', () => {
 // Zoom with scroll
 const scaleBy = 1.08;
 stage.on('wheel', (e) => {
+    return;
     e.evt.preventDefault();
     const oldScale = stage.scaleX();
     const pointer = stage.getPointerPosition();
@@ -140,7 +144,7 @@ stage.on('wheel', (e) => {
     };
     const direction = e.evt.deltaY > 0 ? -1 : 1;
     const newScale = Math.max(Math.min(10, direction > 0 ? oldScale * scaleBy : oldScale / scaleBy), 0.1);
-    console.log(newScale);
+
     stage.scale({ x: newScale, y: newScale });
     stage.position({
         x: pointer.x - mousePointTo.x * newScale,
@@ -162,10 +166,22 @@ ro.observe(canvasArea);
 
 const environments = {};
 
+const pressed = new Set();
+
+window.addEventListener("keydown", (event) => {
+    if (environments[activeId]) {
+        environments[activeId].keyDown(event.key);
+    }
+    pressed.add(event.key);
+});
+
+window.addEventListener("keyup", (event) => {
+    pressed.delete(event.key);
+});
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-  
 
 function makeButton() {
     const button = {};
@@ -238,14 +254,94 @@ function makeButton() {
     return button;
 }
 
+// Tool Tip
+
+const lead = new Konva.Layer();
+stage.add(lead);
+
+const textBox = new Konva.Rect({
+    x : stage.width() - 330,
+    y : 25,
+    width : 320,
+    height : 50,
+    fill : "#aecee08e",
+    stroke : "#666666",
+    cornerRadius : 8,
+})
+
+const textLabel = new Konva.Text({
+    x : stage.width() - 330,
+    y : 25,
+    width : 320,
+    height : 50,
+    fill : "#666666",
+    align : "center",
+    verticalAlign : "middle",
+})
+
+lead.add(textBox);
+lead.add(textLabel);
+
+const tooltip = {
+    layer : new Konva.Layer(),
+    text : "",
+
+    setText : (txt) => {
+        this.text = txt;
+        textLabel.setAttr("text", txt);
+        if (txt == "") {
+            textBox.hide();
+            textLabel.show();
+        } else {
+            const newWidth = textLabel.textWidth + 20;
+
+            textBox.setAttr("width", newWidth);
+            textLabel.setAttr("width", newWidth);
+            textBox.x(stage.width() - newWidth - 30);
+            textLabel.x(stage.width() - newWidth - 30);
+
+            textBox.show();
+            textLabel.show();
+        }
+    },
+};
+
+tooltip.setText("");
+
+
 // 1: Linked Lists
 
+const e1Layer = new Konva.Layer();
+const e1uLayer = new Konva.Layer();
 environments[1] = {
     started : false,
     links : new Set(),
-    layer : new Konva.Layer(),
+    layer : e1Layer,
+    uLayer : e1uLayer,
     selectedLink : null,
     pauseActions: false,
+    hoverLink : null,
+
+    renderer : new Konva.Animation((frame) => {
+        if (activeId == 1) {
+            const layer = e1Layer;
+            if (pressed.has("w")) {
+                layer.y(layer.y() + frame.timeDiff);
+            }
+    
+            if (pressed.has("s")) {
+                layer.y(layer.y() - frame.timeDiff);
+            }
+    
+            if (pressed.has("a")) {
+                layer.x(layer.x() + frame.timeDiff);
+            }
+    
+            if (pressed.has("d")) {
+                layer.x(layer.x() - frame.timeDiff);
+            }
+        }
+    }, e1Layer),
 
     updateArrows : function() {
         environments[1].links.forEach((link) => {
@@ -256,6 +352,12 @@ environments[1] = {
                 arrow.points([60, 20, nextGroup.x() - link.kGroup.x(), nextGroup.y() + 20 - link.kGroup.y()]);
             }
         })
+    },
+
+    keyDown : function(key) {
+        if (this.hoverLink && key.length == 1) {
+            this.hoverLink.setValue(key);
+        }
     },
  
     makeLink : function() {
@@ -283,6 +385,42 @@ environments[1] = {
             stroke : "#666666",
         });
 
+        const valueText = new Konva.Text({
+            x : 0,
+            y : 40,
+            width : 40,
+            height : 20,
+            text : "value",
+            fontSize : 10,
+            align : "center",
+            verticalAlign : "middle",
+            fill : "#252525",
+        });
+
+        const nextText = new Konva.Text({
+            x : 40,
+            y : 40,
+            width : 40,
+            height : 20,
+            text : "next",
+            fontSize : 10,
+            align : "center",
+            verticalAlign : "middle",
+            fill : "#252525",
+        });
+
+        const valueInd = new Konva.Text({
+            x : 0,
+            y : 0,
+            width : 40,
+            height : 40,
+            text : "",
+            fontSize : 10,
+            align : "center",
+            verticalAlign : "middle",
+            fill : "#252525",
+        });
+
         const arrow = new Konva.Arrow({
             stroke : "#666666",
             fill : "#666666",
@@ -299,6 +437,9 @@ environments[1] = {
 
         L.kGroup.add(itemBox);
         L.kGroup.add(nextBox);
+        L.kGroup.add(valueText);
+        L.kGroup.add(nextText);
+        L.kGroup.add(valueInd);
         L.kGroup.add(arrow);
 
         arrow.hide();
@@ -319,11 +460,28 @@ environments[1] = {
             }
         };
 
+        L.setValue = (val) => {
+            L.value = val;
+            valueInd.setAttr("text", val.toString());
+        };
+
         L.kGroup.on("click", () => {
             L.toggleSelect();
         });
 
         L.kGroup.on("dragmove", this.updateArrows);
+
+        valueInd.on("mouseenter", () => {
+            this.hoverLink = L;
+            itemBox.setAttr("fill", "#e4dcf7");
+            tooltip.setText("press key to enter value");
+        });
+
+        valueInd.on("mouseout", () => {
+            this.hoverLink = null;
+            itemBox.setAttr("fill", "#d9d2e9");
+            tooltip.setText("");
+        });
 
         return L;
     },
@@ -416,22 +574,26 @@ environments[1] = {
             newButton.setHeight(35);
             newButton.setText(key + "()");
             newButton.callback = callback;
-            this.layer.add(newButton.kGroup);
+            this.uLayer.add(newButton.kGroup);
 
             buttons[key] = newButton;
             i++;
         });
 
         this.layer.add(starting.kGroup);
+        this.renderer.start();
     },
 };
 
 // 10: Dijkstra's
 
+const e2Layer = new Konva.Layer();
+const e2uLayer = new Konva.Layer();
 environments[9] = {
     started : false,
     items : {},
-    layer : new Konva.Layer(),
+    layer : e2Layer,
+    uLayer : e2uLayer,
     
     start : function() {
         

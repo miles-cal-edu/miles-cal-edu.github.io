@@ -1,0 +1,5 @@
+# linked lists
+: Input, Output, Next Editor, Representation Text, Other Buttons *use destroy(), tooltip
+# dijkstra
+# disjoint sets
+# circular array
