@@ -254,6 +254,28 @@ function makeButton() {
     return button;
 }
 
+function makeDragger(layer, num) {
+    return (frame) => {
+        if (activeId == num) {
+            if (pressed.has("ArrowUp")) {
+                layer.y(layer.y() + frame.timeDiff);
+            }
+    
+            if (pressed.has("ArrowDown")) {
+                layer.y(layer.y() - frame.timeDiff);
+            }
+    
+            if (pressed.has("ArrowLeft")) {
+                layer.x(layer.x() + frame.timeDiff);
+            }
+    
+            if (pressed.has("ArrowRight")) {
+                layer.x(layer.x() - frame.timeDiff);
+            }
+        }
+    }
+}
+
 // Tool Tip
 
 const lead = new Konva.Layer();
@@ -263,9 +285,10 @@ const textBox = new Konva.Rect({
     x : stage.width() - 330,
     y : 25,
     width : 320,
-    height : 50,
-    fill : "#aecee08e",
+    height : 30,
+    fill : "#c0d4e03f",
     stroke : "#666666",
+    strokeWidth : 1,
     cornerRadius : 8,
 })
 
@@ -273,7 +296,7 @@ const textLabel = new Konva.Text({
     x : stage.width() - 330,
     y : 25,
     width : 320,
-    height : 50,
+    height : 30,
     fill : "#666666",
     align : "center",
     verticalAlign : "middle",
@@ -321,42 +344,51 @@ environments[1] = {
     selectedLink : null,
     pauseActions: false,
     hoverLink : null,
+    renderer : new Konva.Animation(makeDragger(e1Layer, 1), e1Layer),
+    displayer : new Konva.Text({}),
 
-    renderer : new Konva.Animation((frame) => {
-        if (activeId == 1) {
-            const layer = e1Layer;
-            if (pressed.has("w")) {
-                layer.y(layer.y() + frame.timeDiff);
-            }
-    
-            if (pressed.has("s")) {
-                layer.y(layer.y() - frame.timeDiff);
-            }
-    
-            if (pressed.has("a")) {
-                layer.x(layer.x() + frame.timeDiff);
-            }
-    
-            if (pressed.has("d")) {
-                layer.x(layer.x() - frame.timeDiff);
-            }
-        }
-    }, e1Layer),
+    linkDisplay : function(L) {
+        const visited = new Set();
+
+        const h = (s) => {
+            if (visited.has(L)) {
+                return s + "inf...]";
+            } else if (L.value != null) {
+                s += L.value;
+            };
+            visited.add(L);
+            L = L.next;
+            return L ? h(s + ", ") : s + "]";
+        };
+
+        return h("[")
+    },
+
+    updateDisplay : function(L) {
+        this.displayer.setAttr("text", "Current List: " + (L ? this.linkDisplay(L) : "None"));
+    },
 
     updateArrows : function() {
-        environments[1].links.forEach((link) => {
+        const t = environments[1];
+        t.links.forEach((link) => {
             const arrow = link.arrow;
             arrow[link.next ? "show" : "hide"]();
             if (link.next) {
                 const nextGroup = link.next.kGroup;
                 arrow.points([60, 20, nextGroup.x() - link.kGroup.x(), nextGroup.y() + 20 - link.kGroup.y()]);
             }
+            t.updateDisplay(t.selectedLink);
         })
     },
 
     keyDown : function(key) {
-        if (this.hoverLink && key.length == 1) {
+        if (this.hoverLink && key.length == 1 && key != " " && Number.isFinite(+key)) {
             this.hoverLink.setValue(key);
+        }
+        
+        if (key == " " && this.selectedLink) {
+            this.selectedLink.next = this.hoverLink;
+            this.updateArrows();
         }
     },
  
@@ -415,10 +447,11 @@ environments[1] = {
             width : 40,
             height : 40,
             text : "",
-            fontSize : 10,
+            fontSize : 13,
             align : "center",
             verticalAlign : "middle",
-            fill : "#252525",
+            fill : "#4b4b4b",
+            fontStyle : "normal",
         });
 
         const arrow = new Konva.Arrow({
@@ -455,18 +488,27 @@ environments[1] = {
                     this.selectedLink.toggleSelect();
                 }
                 this.selectedLink = L;
+                this.updateDisplay(L);
             } else {
                 this.selectedLink = null;
+                this.updateDisplay();
             }
         };
 
         L.setValue = (val) => {
             L.value = val;
             valueInd.setAttr("text", val.toString());
+            this.updateDisplay(this.selectedLink);
         };
 
         L.kGroup.on("click", () => {
             L.toggleSelect();
+        });
+
+        L.kGroup.on("dblclick dbltap", () => {
+            if (this.selectedLink) {
+                this.selectedLink.next = L;
+            }
         });
 
         L.kGroup.on("dragmove", this.updateArrows);
@@ -482,6 +524,8 @@ environments[1] = {
             itemBox.setAttr("fill", "#d9d2e9");
             tooltip.setText("");
         });
+
+        L.setValue("0");
 
         return L;
     },
@@ -568,10 +612,10 @@ environments[1] = {
             const callback = buttons[key];
             const newButton = makeButton();
 
-            newButton.setX(40 + i*160);
-            newButton.setY(570);
+            newButton.setX(40 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
             newButton.setWidth(140);
-            newButton.setHeight(35);
+            newButton.setHeight(25);
             newButton.setText(key + "()");
             newButton.callback = callback;
             this.uLayer.add(newButton.kGroup);
@@ -580,7 +624,15 @@ environments[1] = {
             i++;
         });
 
+        this.displayer.setAttr("text", "Current List: None");
+        this.displayer.setAttr("x", 40);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+
         this.layer.add(starting.kGroup);
+        this.uLayer.add(this.displayer);
         this.renderer.start();
     },
 };
