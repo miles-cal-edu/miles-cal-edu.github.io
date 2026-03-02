@@ -17,7 +17,7 @@ themeToggle.addEventListener('click', () => {
 
 // ── Sidebar items ──
 const defaultItems = [
-    { id: 1, label: 'LinkedLists' },
+    { id: 1, label: 'Linked Lists' },
     { id: 2, label: 'Circular Arrays' },
     { id: 3, label: 'Disjoint Sets' },
     { id: 4, label: 'Binary Search Trees' },
@@ -206,6 +206,7 @@ function makeButton() {
         align : "center",
         verticalAlign : "middle",
         fill : "#252525",
+        fontFamily : "DM Sans",
     })
 
     button.kGroup = new Konva.Group({
@@ -257,19 +258,19 @@ function makeButton() {
 function makeDragger(layer, num) {
     return (frame) => {
         if (activeId == num) {
-            if (pressed.has("ArrowUp")) {
+            if (pressed.has("w")) {
                 layer.y(layer.y() + frame.timeDiff);
             }
     
-            if (pressed.has("ArrowDown")) {
+            if (pressed.has("s")) {
                 layer.y(layer.y() - frame.timeDiff);
             }
     
-            if (pressed.has("ArrowLeft")) {
+            if (pressed.has("a")) {
                 layer.x(layer.x() + frame.timeDiff);
             }
     
-            if (pressed.has("ArrowRight")) {
+            if (pressed.has("d")) {
                 layer.x(layer.x() - frame.timeDiff);
             }
         }
@@ -305,17 +306,33 @@ const textLabel = new Konva.Text({
 lead.add(textBox);
 lead.add(textLabel);
 
+textBox.hide();
+textLabel.hide();
+
 const tooltip = {
     layer : new Konva.Layer(),
-    text : "",
+    texts : {},
 
-    setText : (txt) => {
-        this.text = txt;
-        textLabel.setAttr("text", txt);
-        if (txt == "") {
+    update : () => {
+        let toptext = "";
+        let topval = 0;
+
+        console.log("cycle check");
+        Object.values(tooltip.texts).forEach(element => {
+            console.log("check");
+            console.log(element);
+            if (element.ind > topval) {
+                topval = element.ind;
+                toptext = element.text;
+            }
+        });
+
+        if (toptext == "") {
             textBox.hide();
-            textLabel.show();
+            textLabel.hide();
         } else {
+            textLabel.setAttr("width", 600)
+            textLabel.setAttr("text", toptext);
             const newWidth = textLabel.textWidth + 20;
 
             textBox.setAttr("width", newWidth);
@@ -327,9 +344,20 @@ const tooltip = {
             textLabel.show();
         }
     },
-};
 
-tooltip.setText("");
+    delText : (name) => {
+        delete tooltip.texts[name];
+        tooltip.update();
+    },
+
+    setText : (name, txt, idx) => {
+        tooltip.texts[name] = {
+            ind : idx,
+            text : txt,
+        };
+        tooltip.update();
+    },
+};
 
 
 // 1: Linked Lists
@@ -346,6 +374,9 @@ environments[1] = {
     hoverLink : null,
     renderer : new Konva.Animation(makeDragger(e1Layer, 1), e1Layer),
     displayer : new Konva.Text({}),
+    isInputHover : false,
+    input : 0,
+    output : "null",
 
     linkDisplay : function(L) {
         const visited = new Set();
@@ -381,9 +412,18 @@ environments[1] = {
         })
     },
 
+    boxUpdate : function() {},
+
     keyDown : function(key) {
-        if (this.hoverLink && key.length == 1 && key != " " && Number.isFinite(+key)) {
-            this.hoverLink.setValue(key);
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.hoverLink) {
+                this.hoverLink.setValue(key);
+            }
+
+            if (this.isInputHover) {
+                this.input = key.toString();
+                this.boxUpdate();
+            }
         }
         
         if (key == " " && this.selectedLink) {
@@ -427,6 +467,7 @@ environments[1] = {
             align : "center",
             verticalAlign : "middle",
             fill : "#252525",
+            fontFamily : "DM Sans",
         });
 
         const nextText = new Konva.Text({
@@ -439,6 +480,7 @@ environments[1] = {
             align : "center",
             verticalAlign : "middle",
             fill : "#252525",
+            fontFamily : "DM Sans",
         });
 
         const valueInd = new Konva.Text({
@@ -452,6 +494,7 @@ environments[1] = {
             verticalAlign : "middle",
             fill : "#4b4b4b",
             fontStyle : "normal",
+            fontFamily : "DM Sans",
         });
 
         const arrow = new Konva.Arrow({
@@ -487,9 +530,11 @@ environments[1] = {
                 if (this.selectedLink) {
                     this.selectedLink.toggleSelect();
                 }
+                tooltip.setText("space_add", "Hover on a link and press space to reassign next", 1);
                 this.selectedLink = L;
                 this.updateDisplay(L);
             } else {
+                tooltip.delText("space_add");
                 this.selectedLink = null;
                 this.updateDisplay();
             }
@@ -516,13 +561,13 @@ environments[1] = {
         valueInd.on("mouseenter", () => {
             this.hoverLink = L;
             itemBox.setAttr("fill", "#e4dcf7");
-            tooltip.setText("press key to enter value");
+            tooltip.setText("link_input", "Press key to enter value", 2);
         });
 
         valueInd.on("mouseout", () => {
             this.hoverLink = null;
             itemBox.setAttr("fill", "#d9d2e9");
-            tooltip.setText("");
+            tooltip.delText("link_input");
         });
 
         L.setValue("0");
@@ -546,6 +591,7 @@ environments[1] = {
                 this.layer.add(prevLink.kGroup);
 
                 prevLink.next = link;
+                prevLink.setValue(this.input.toString());
 
                 prevLink.toggleSelect();
                 this.updateArrows();
@@ -586,9 +632,15 @@ environments[1] = {
 
                 last.next = lastLink;
 
+                lastLink.setValue(this.input);
+
                 this.pauseActions = false;
                 this.updateArrows();
             }
+        };
+
+        buttons.get = async () => {
+
         };
 
         buttons.removeFirst = async () => {
@@ -596,10 +648,6 @@ environments[1] = {
         };
 
         buttons.removeLast = async () => {
-
-        };
-
-        buttons.get = async () => {
 
         };
 
@@ -612,7 +660,7 @@ environments[1] = {
             const callback = buttons[key];
             const newButton = makeButton();
 
-            newButton.setX(40 + (i % 3)*160);
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
             newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
             newButton.setWidth(140);
             newButton.setHeight(25);
@@ -625,11 +673,106 @@ environments[1] = {
         });
 
         this.displayer.setAttr("text", "Current List: None");
-        this.displayer.setAttr("x", 40);
+        this.displayer.setAttr("x", stage.width()/2 - 280);
         this.displayer.setAttr("y", stage.height() - 115);
         this.displayer.setAttr("fill", "#737070");
         this.displayer.setAttr("fontSize", 13);
         this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width()/2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const iBoxInput = new Konva.Text({
+            text : "0",
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width()/2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press key to enter value", 3);
+        });
+
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
 
         this.layer.add(starting.kGroup);
         this.uLayer.add(this.displayer);
