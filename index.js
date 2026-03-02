@@ -317,10 +317,7 @@ const tooltip = {
         let toptext = "";
         let topval = 0;
 
-        console.log("cycle check");
         Object.values(tooltip.texts).forEach(element => {
-            console.log("check");
-            console.log(element);
             if (element.ind > topval) {
                 topval = element.ind;
                 toptext = element.text;
@@ -640,20 +637,153 @@ environments[1] = {
         };
 
         buttons.get = async () => {
+            if (!this.pauseActions && this.selectedLink) {
+                const link = this.selectedLink;
+                this.pauseActions = true;
 
+                const indicator = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    stroke : "#666666",
+                    width : 5,
+                });
+
+                this.layer.add(indicator);
+
+                let nextLink = link;
+                let last = link;
+                let togo = this.input;
+                while (nextLink &&  0 <= togo) {
+                    togo--;
+                    indicator.setAttr("x", nextLink.kGroup.getAttr("x") + 40);
+                    indicator.setAttr("y", nextLink.kGroup.getAttr("y") - 8);
+                    await sleep(250);
+                    last = nextLink;
+                    nextLink = nextLink.next;
+                }
+                
+                indicator.destroy();
+
+                if (0 <= togo) {
+                    this.output = "ERROR: bounds"
+                } else {
+                    this.output = last.value;
+                }
+
+                this.boxUpdate();
+
+                this.pauseActions = false;
+                this.updateArrows();
+            }
         };
 
         buttons.removeFirst = async () => {
+            if (this.selectedLink) {
+                const link = this.selectedLink;
+                this.selectedLink.toggleSelect();
 
+                this.links.delete(link);
+
+                this.links.forEach((e) => {
+                    if (e.next && e.next == link) {
+                        e.next = null;
+                    } 
+                });
+
+                if (link.next) {
+                    link.next.toggleSelect();
+                }
+
+                link.kGroup.destroy();
+
+                this.updateArrows();
+            }
         };
 
         buttons.removeLast = async () => {
+            if (!this.pauseActions && this.selectedLink) {
+                const link = this.selectedLink;
+                this.pauseActions = true;
 
+                const indicator = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    stroke : "#666666",
+                    width : 5,
+                });
+
+                this.layer.add(indicator);
+
+                let nextLink = link.next;
+                let last = link;
+                while (nextLink) {
+                    indicator.setAttr("x", nextLink.kGroup.getAttr("x") + 40);
+                    indicator.setAttr("y", nextLink.kGroup.getAttr("y") - 8);
+                    await sleep(250);
+                    last = nextLink;
+                    nextLink = nextLink.next;
+                }
+                
+                indicator.destroy();
+
+                this.links.delete(last);
+
+                this.links.forEach((e) => {
+                    if (e.next && e.next == last) {
+                        e.next = null;
+                    } 
+                });
+
+                if (last == this.selectedLink) {
+                    this.selectedLink.toggleSelect();
+                }
+
+                last.kGroup.destroy();
+
+                this.pauseActions = false;
+                this.updateArrows();
+            }
         };
 
         buttons.size = async () => {
+            if (!this.pauseActions && this.selectedLink) {
+                const link = this.selectedLink;
+                this.pauseActions = true;
 
+                const indicator = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    stroke : "#666666",
+                    width : 5,
+                });
+
+                this.layer.add(indicator);
+
+                let nextLink = link.next;
+                let i = 1;
+                while (nextLink) {
+                    indicator.setAttr("x", nextLink.kGroup.getAttr("x") + 40);
+                    indicator.setAttr("y", nextLink.kGroup.getAttr("y") - 8);
+                    await sleep(250);
+                    i++;
+                    nextLink = nextLink.next;
+                }
+                
+                indicator.destroy();
+
+                this.output = i.toString();
+                this.boxUpdate();
+                this.pauseActions = false;
+            }
         };
+
+        const hasInput = new Set();
+        hasInput.add("addFirst");
+        hasInput.add("addLast");
+        hasInput.add("get");
 
         let i = 0
         Object.keys(buttons).forEach((key) => {
@@ -664,7 +794,7 @@ environments[1] = {
             newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
             newButton.setWidth(140);
             newButton.setHeight(25);
-            newButton.setText(key + "()");
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
             newButton.callback = callback;
             this.uLayer.add(newButton.kGroup);
 

@@ -1,5 +1,8 @@
 # linked lists
-: Input, Output, X Next Editor, X Representation Text, Other Buttons *use destroy(), X tooltip
+: X Input, X Output, X Next Editor, X Representation Text, X Other Buttons *use destroy(), X tooltip
+: New Link when no links
+: Buttons Autho Shift
+: write efficient code
 # dijkstra
 # disjoint sets
 # circular array
