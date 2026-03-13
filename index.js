@@ -44,13 +44,13 @@ const watermark = document.getElementById('watermark');
 function renderSidebar() {
     sidebarList.innerHTML = '';
     items.forEach((item, i) => {
+        const environment = environments[item.id];
         const el = document.createElement('div');
-        el.className = 'sidebar-item' + (item.id === activeId ? ' active' : '');
+        el.className = 'sidebar-item' + (item.id === activeId ? ' active' : '') + (environment ? '' : ' wip');
         el.innerHTML = `
-        <span class="sidebar-item-number">${i + 1}</span>
+        <span class="sidebar-item-number">${(environment ? i + 1 : "🚫")}</span>
         <span class="sidebar-item-label">${item.label}</span>
       `;
-        const environment = environments[item.id];
         if (environment) {
             el.addEventListener('click', () => {
                 activeId = item.id;
@@ -67,8 +67,8 @@ function renderSidebar() {
                 environment.layer.show();
                 environment.uLayer.show();
             });
-            stage.add(environment.layer);
-            stage.add(environment.uLayer);
+            mLayer.add(environment.layer);
+            mLayer.add(environment.uLayer);
             if (!environment.started) {
                 environment.started = true;
                 environment.start();
@@ -121,6 +121,9 @@ const stage = new Konva.Stage({
     width: canvasArea.offsetWidth,
     height: canvasArea.offsetHeight,
 });
+
+const mLayer = new Konva.Layer();
+stage.add(mLayer);
 
 // Track mouse position
 stage.on('mousemove', () => {
@@ -356,11 +359,16 @@ const tooltip = {
     },
 };
 
+const gAttr = {
+    x : 0,
+    y : 0,
+    draggable : false,
+}
 
 // 1: Linked Lists
 
-const e1Layer = new Konva.Layer();
-const e1uLayer = new Konva.Layer();
+const e1Layer = new Konva.Group(gAttr);
+const e1uLayer = new Konva.Group(gAttr); 
 environments[1] = {
     started : false,
     links : new Set(),
@@ -369,7 +377,7 @@ environments[1] = {
     selectedLink : null,
     pauseActions: false,
     hoverLink : null,
-    renderer : new Konva.Animation(makeDragger(e1Layer, 1), e1Layer),
+    renderer : new Konva.Animation(makeDragger(e1Layer, 1), mLayer),
     displayer : new Konva.Text({}),
     isInputHover : false,
     input : 0,
@@ -910,17 +918,354 @@ environments[1] = {
     },
 };
 
-// 10: Dijkstra's
+// 3 : Disjoint Sets
 
-const e2Layer = new Konva.Layer();
-const e2uLayer = new Konva.Layer();
-environments[9] = {
+const e3Layer = new Konva.Group(gAttr);
+const e3uLayer = new Konva.Group(gAttr);
+environments[3] = {
     started : false,
-    items : {},
-    layer : e2Layer,
-    uLayer : e2uLayer,
+    nodes : new Set(),
+    layer : e3Layer,
+    uLayer : e3uLayer,
+    isInputHover : false,
+    displayer : new Konva.Text({}),
+    input : 0,
+
+    makeNode : function() {
+        const N = {}
+
+        this.nodes.add(N);
+
+        N.Box = new Konva.Rect({
+            x : 0,
+            y : 0,
+            width : 32,
+            height : 32,
+            fill : "#b6d7a8",
+            stroke : "#bcbcbc",
+        });
+
+        N.label = new Konva.Text({
+            x : 0,
+            y : 0,
+            width : 32,
+            height : 32,
+            text : (this.nodes.size - 1).toString(),
+            fontSize : 10,
+            align : "center",
+            verticalAlign : "middle",
+            fill : "#252525",
+            fontFamily : "DM Sans",
+        });
+
+        N.kGroup = new Konva.Group({
+            draggable : true,
+            x : 50,
+            y : 50,
+        });
+
+        N.kGroup.add(N.Box);
+        N.kGroup.add(N.label);
+
+        return N
+    },
+
+    updateDisplay : function(L) {
+        this.displayer.setAttr("text", "Current List: None");
+    },
+
+    keyDown : function(key) {
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                this.input = key.toString();
+                this.boxUpdate();
+            }
+        }
+    },
     
     start : function() {
+        const starting = this.makeNode();
+
+        let buttons = {}
+        let hasInput = new Set();
+
+        buttons.addNode = () => {
+            let n = this.makeNode();
+
+            this.layer.add(n.kGroup);
+        };
+
+        let i = 0
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = callback;
+            this.uLayer.add(newButton.kGroup);
+
+            buttons[key] = newButton;
+            i++;
+        });
+
+        this.displayer.setAttr("text", "Current List: None");
+        this.displayer.setAttr("x", stage.width()/2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width()/2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const iBoxInput = new Konva.Text({
+            text : "0",
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width()/2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press key to enter value", 3);
+        });
+
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
+
+        this.layer.add(starting.kGroup);
+    },
+};
+
+// 9: Dijkstra's
+
+const e9Layer = new Konva.Group(gAttr);
+const e9uLayer = new Konva.Group(gAttr);
+environments[9] = {
+    started : false,
+    nodes : new Set(),
+    layer : e9Layer,
+    uLayer : e9uLayer,
+    isInputHover : false,
+    displayer : new Konva.Text({}),
+    input : 0,
+
+    keyDown : function() {
+
+    },
+    
+    start : function() {
+        
+        let buttons = {}
+        let hasInput = new Set();
+
+        buttons.addNode = () => {
+            let n = this.makeNode();
+
+            this.layer.add(n.kGroup);
+        };
+
+        let i = 0
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = callback;
+            this.uLayer.add(newButton.kGroup);
+
+            buttons[key] = newButton;
+            i++;
+        });
+
+        this.displayer.setAttr("text", "Current List: None");
+        this.displayer.setAttr("x", stage.width()/2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width()/2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const iBoxInput = new Konva.Text({
+            text : "0",
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width()/2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press key to enter value", 3);
+        });
+
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
         
     },
 };
