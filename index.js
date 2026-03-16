@@ -1204,6 +1204,11 @@ function djInit(env, sourceNode) {
 function djStep(env) {
     const s = env.dj;
     if (s.done || s.pq.size === 0) {
+        if (s.lastCurrent) {
+            s.lastCurrent.Box.stroke("#666666");
+            s.lastCurrent.Box.fill(DJ_COL.nodeSettled);
+            s.lastCurrent = null;
+        }
         s.done = true;
         djRefreshFringe(env);
         return;
@@ -1397,7 +1402,7 @@ function djAddButtons(env, uLayer, stage) {
     const bX0 = stage.width()/2 - 280;
  
     smallBtn("▶ Start Dijkstra", bX0, bY, 140, () => {
-        const first = [...env.nodes][0];
+        const first = env.selectedNode;
         if (!first) return;
 
         djRefreshEdgeColors(env);
@@ -1442,6 +1447,11 @@ environments[9] = {
     input : 1,
     output : "Null",
     hoverNode : null,
+    lastInput : 0,
+
+    dj : {
+        active : false,
+    },
 
     points : [
         [0, 16],
@@ -1663,7 +1673,12 @@ environments[9] = {
 
         if (key.length == 1 && key != " " && Number.isFinite(+key)) {
             if (this.isInputHover) {
-                this.input = parseInt(key.toString());
+                if (Date.now() - this.lastInput < 500) {
+                    this.input = this.input*10 + parseInt(key.toString());
+                } else {
+                    this.input = parseInt(key.toString());
+                }
+                this.lastInput = Date.now();
                 this.boxUpdate();
             };
         };
@@ -1688,6 +1703,40 @@ environments[9] = {
             this.layer.add(n.kGroup);
         };
 
+        const dn = () => {
+            if (this.selectedNode) {
+                const t = environments[9];
+                t.nodes.forEach((node) => {
+                    if (node.next.has(this.selectedNode)) {
+                        const n = node.next.get(this.selectedNode);
+                        n.arrow.destroy();
+                        n.cut.destroy();
+                        n.txt.destroy();
+                    }
+
+                    if (this.selectedNode.next.has(node)) {
+                        const n = this.selectedNode.next.get(node);
+                        n.arrow.destroy();
+                        n.cut.destroy();
+                        n.txt.destroy();
+                    }
+                });
+
+                this.selectedNode.kGroup.destroy();
+                this.nodes.delete(this.selectedNode);
+            };
+        };
+
+        buttons.delNode = dn;
+
+        buttons.clear = () => {
+            const t = environments[9];
+            t.nodes.forEach((node) => {
+                node.toggleSelect();
+                dn();
+            });
+        };
+
         let i = 0
         Object.keys(buttons).forEach((key) => {
             const callback = buttons[key];
@@ -1698,7 +1747,11 @@ environments[9] = {
             newButton.setWidth(140);
             newButton.setHeight(25);
             newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
-            newButton.callback = callback;
+            newButton.callback = () => {
+                if (!this.dj.active) {
+                    callback();
+                };
+            };
             this.uLayer.add(newButton.kGroup);
 
             buttons[key] = newButton;
