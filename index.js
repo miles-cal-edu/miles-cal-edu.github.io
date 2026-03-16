@@ -1122,6 +1122,313 @@ environments[3] = {
 
 // 9: Dijkstra's
 
+const DJ_COL = {
+    edgeDefault  : "#666666",
+    edgeSettled  : "#222222",
+    edgeRelax    : "#e040fb",
+    nodeDefault  : "#b6d7a8",
+    nodeSettled  : "#ffffff",
+    nodeCurrent  : "#e040fb",
+    distInfinity : "∞",
+    distColor    : "#e040fb",
+};
+ 
+class MinHeap {
+    constructor() { this._h = []; }
+    push(item) {
+        this._h.push(item);
+        this._bubbleUp(this._h.length - 1);
+    }
+    pop() {
+        const top = this._h[0];
+        const last = this._h.pop();
+        if (this._h.length > 0) { this._h[0] = last; this._siftDown(0); }
+        return top;
+    }
+    get size() { return this._h.length; }
+    _bubbleUp(i) {
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (this._h[p].priority <= this._h[i].priority) break;
+            [this._h[p], this._h[i]] = [this._h[i], this._h[p]];
+            i = p;
+        }
+    }
+    _siftDown(i) {
+        const n = this._h.length;
+        while (true) {
+            let s = i, l = 2*i+1, r = 2*i+2;
+            if (l < n && this._h[l].priority < this._h[s].priority) s = l;
+            if (r < n && this._h[r].priority < this._h[s].priority) s = r;
+            if (s === i) break;
+            [this._h[s], this._h[i]] = [this._h[i], this._h[s]];
+            i = s;
+        }
+    }
+}
+ 
+function djInit(env, sourceNode) {
+    if (env.selectedNode) {
+        env.selectedNode.toggleSelect();
+    }
+
+    const nodeArr = [...env.nodes];          
+ 
+    env.dj = {
+        active      : true,
+        done        : false,
+        nodeArr,
+        distTo      : new Map(),             
+        edgeTo      : new Map(),             
+        settled     : new Set(),             
+        pq          : new MinHeap(),
+
+        lastRelaxed : [],                    
+        lastCurrent : null,                 
+        stepCount   : 0,
+    };
+ 
+    nodeArr.forEach(n => {
+        env.dj.distTo.set(n, Infinity);
+        env.dj.edgeTo.set(n, null);
+    });
+    env.dj.distTo.set(sourceNode, 0);
+    env.dj.pq.push({ priority: 0, node: sourceNode });
+ 
+    djRefreshTable(env);
+    djRefreshFringe(env);
+    djRefreshNodeLabels(env);
+    djRefreshEdgeColors(env);
+}
+ 
+function djStep(env) {
+    const s = env.dj;
+    if (s.done || s.pq.size === 0) {
+        s.done = true;
+        djRefreshFringe(env);
+        return;
+    }
+ 
+    s.lastRelaxed.forEach(({ from, to }) => {
+        if (from.next.has(to)) {
+            const conn = from.next.get(to);
+            const inSPT = (s.edgeTo.get(to) === from && s.settled.has(to));
+            
+            conn.arrow.stroke(inSPT ? DJ_COL.edgeSettled : DJ_COL.edgeDefault);
+            conn.arrow.fill (inSPT ? DJ_COL.edgeSettled : DJ_COL.edgeDefault);
+        }
+    });
+    s.lastRelaxed = [];
+ 
+    if (s.lastCurrent) {
+        s.lastCurrent.Box.stroke("#666666");
+        s.lastCurrent.Box.fill(DJ_COL.nodeSettled);
+        s.lastCurrent = null;
+    }
+ 
+    let entry;
+    do {
+        if (s.pq.size === 0) { s.done = true; djRefreshFringe(env); return; }
+        entry = s.pq.pop();
+    } while (s.settled.has(entry.node));
+ 
+    const u = entry.node;
+    s.settled.add(u);
+    s.lastCurrent = u;
+    u.Box.stroke(DJ_COL.nodeCurrent);
+ 
+    const pred = s.edgeTo.get(u);
+    if (pred && pred.next.has(u)) {
+        const conn = pred.next.get(u);
+        conn.arrow.stroke(DJ_COL.edgeSettled);
+        conn.arrow.fill (DJ_COL.edgeSettled);
+        conn.arrow.strokeWidth(3);
+    }
+ 
+    env.nodes.forEach(v => {
+        if (!u.next.has(v)) return;
+        if (s.settled.has(v)) return;
+ 
+        const conn  = u.next.get(v);
+        const w     = conn.len;
+        const newD  = s.distTo.get(u) + w;
+ 
+        conn.arrow.stroke(DJ_COL.edgeRelax);
+        conn.arrow.fill (DJ_COL.edgeRelax);
+        s.lastRelaxed.push({ from: u, to: v });
+ 
+        if (newD < s.distTo.get(v)) {
+            s.distTo.set(v, newD);
+            s.edgeTo.set(v, u);
+            s.pq.push({ priority: newD, node: v });
+        }
+    });
+ 
+    s.stepCount++;
+    djRefreshTable(env);
+    djRefreshFringe(env);
+    djRefreshNodeLabels(env);
+}
+ 
+function djRefreshTable(env) {
+    const s = env.dj;
+    const lines = ["Node   distTo   edgeTo"];
+    s.nodeArr.forEach(n => {
+        const label  = n.label.text();
+        const dist   = s.distTo.get(n);
+        const distS  = dist === Infinity ? "∞" : dist.toString();
+        const pred   = s.edgeTo.get(n);
+        const predS  = pred ? pred.label.text() : "-";
+        lines.push(`${label.padEnd(7)}${distS.padEnd(9)}${predS}`);
+    });
+    env.tableText.text(lines.join("\n"));
+}
+ 
+function djRefreshFringe(env) {
+    const s = env.dj;
+    if (s.done || s.pq.size === 0) {
+        env.fringeText.text("Fringe: []  (done)");
+        return;
+    }
+
+    const best = new Map();
+    s.pq._h.forEach(e => {
+        if (!best.has(e.node) || e.priority < best.get(e.node))
+            best.set(e.node, e.priority);
+    });
+
+    const items = [];
+    best.forEach((d, n) => {
+        if (!s.settled.has(n))
+            items.push({ node: n, d });
+    });
+    items.sort((a, b) => a.d - b.d);
+    const str = items.map(i => {
+        const lbl = i.node.label.text();
+        const d   = i.d === Infinity ? "∞" : i.d;
+        return `(${lbl}: ${d})`;
+    }).join(", ");
+    env.fringeText.text("Fringe: [" + str + "]");
+}
+ 
+function djRefreshNodeLabels(env) {
+    const s = env.dj;
+    s.nodeArr.forEach(n => {
+        const d = s.distTo.get(n);
+        const dStr = d === Infinity ? "∞" : d.toString();
+        if (!n._distLabel) {
+            n._distLabel = new Konva.Text({
+                x: 12, y: -16,
+                width: 42,
+                text: "",
+                fontSize: 13,
+                align: "center",
+                fill: DJ_COL.distColor,
+                fontFamily: "DM Sans",
+                fontStyle: "bold",
+            });
+            
+            n.kGroup.add(n._distLabel);
+        }
+        n._distLabel.text(dStr);
+    });
+}
+ 
+function djRefreshEdgeColors(env) {
+    env.nodes.forEach(from => {
+        from.Box.fill(DJ_COL.nodeDefault);
+        env.nodes.forEach(to => {
+            if (from.next.has(to)) {
+                const conn = from.next.get(to);
+                conn.arrow.stroke(DJ_COL.edgeDefault);
+                conn.arrow.fill (DJ_COL.edgeDefault);
+                conn.arrow.strokeWidth(2);
+            }
+        });
+    });
+}
+ 
+function djAddButtons(env, uLayer, stage) {
+    env.tableText = new Konva.Text({
+        x: 20, y: 20,
+        text: "Run Dijkstra to see results",
+        fontSize: 13,
+        fill: "#555555",
+        fontFamily: "DM Mono, monospace",
+        lineHeight: 1.6,
+    });
+    uLayer.add(env.tableText);
+ 
+    env.fringeText = new Konva.Text({
+        x: stage.width()/2 - 280,
+        y: stage.height() - 115,
+        text: "Fringe: (not started)",
+        fontSize: 13,
+        fill: "#555555",
+        fontFamily: "DM Mono, monospace",
+        fontStyle: "italic",
+    });
+    uLayer.add(env.fringeText);
+ 
+    function smallBtn(label, x, y, w, cb) {
+        const g    = new Konva.Group({ x, y });
+        const rect = new Konva.Rect({
+            width: w, height: 25,
+            fill: "#c0d4e03f", stroke: "#666666",
+            strokeWidth: 1, cornerRadius: 5,
+        });
+        const txt = new Konva.Text({
+            width: w, height: 25,
+            text: label,
+            fontSize: 12,
+            align: "center", verticalAlign: "middle",
+            fill: "#444444",
+            fontFamily: "DM Sans",
+        });
+        g.add(rect); g.add(txt);
+        g.on("mouseenter", () => rect.fill("#b0c8d860"));
+        g.on("mouseleave", () => rect.fill("#c0d4e03f"));
+        g.on("click", cb);
+        uLayer.add(g);
+        return { g, rect, txt };
+    }
+ 
+    const bY  = stage.height() - 55;
+    const bX0 = stage.width()/2 - 280;
+ 
+    smallBtn("▶ Start Dijkstra", bX0, bY, 140, () => {
+        const first = [...env.nodes][0];
+        if (!first) return;
+
+        djRefreshEdgeColors(env);
+        djInit(env, first);
+    });
+ 
+    smallBtn("Step →", bX0 + 150, bY, 90, () => {
+        if (!env.dj || !env.dj.active) return;
+        djStep(env);
+    });
+ 
+    smallBtn("Run All", bX0 + 250, bY, 90, () => {
+        if (!env.dj || !env.dj.active) return;
+        while (!env.dj.done && env.dj.pq.size > 0) djStep(env);
+        env.dj.done = true;
+        djRefreshFringe(env);
+    });
+ 
+    smallBtn("↺ Reset", bX0 + 350, bY, 80, () => {
+        if (!env.dj) return;
+        env.dj.nodeArr.forEach(n => {
+            if (n._distLabel) n._distLabel.text("");
+            n.Box.stroke("#666666");
+        });
+        djRefreshEdgeColors(env);
+        env.tableText.text("Run Dijkstra to see results");
+        env.fringeText.text("Fringe: (not started)");
+        env.dj.active = false;
+    });
+}
+
 const e9Layer = new Konva.Group(gAttr);
 const e9uLayer = new Konva.Group(gAttr);
 environments[9] = {
@@ -1135,6 +1442,7 @@ environments[9] = {
     input : 1,
     output : "Null",
     hoverNode : null,
+
     points : [
         [0, 16],
         [21, 0],
@@ -1143,14 +1451,21 @@ environments[9] = {
     ],
 
     st_nodes : [
-        [0, 2, [[1, 2], [2, 1]]],
-        [2, 1, [[3, 11], [4, 3], [2, 5]]],
-        [4, 3, [[4, 1], [5, 15]]],
-        [6, 0, [[4, 2], [6, 1]]],
-        [6, 2, [[6, 5], [5, 4]]],
-        [6, 4, [[6, 1]]],
-        [8, 2, []],
-    ],
+        // A (0)
+        [75, 215, [[1, 2], [2, 1]]],
+        // B (1)
+        [220, 130, [[3, 11], [4, 3], [2, 5]]],
+        // C (2)
+        [220, 295, [[5, 15]]],
+        // D (3)
+        [390, 45, [[4, 2]]],
+        // E (4)
+        [390, 215, [[2, 1], [6, 5], [5, 4]]],
+        // F (5)
+        [390, 340, []],
+        // G (6)
+        [520, 215, [[3, 1], [5, 1]]],
+      ],
 
     getPoints : function(x, y) {
         let tp;
@@ -1217,7 +1532,7 @@ environments[9] = {
             width : 42,
             height : 32,
             text : String.fromCharCode((this.nodes.size % 26) + 65) + (Math.floor(this.nodes.size / 26) || "").toString(),
-            fontSize : 14,
+            fontSize : 15,
             align : "center",
             verticalAlign : "middle",
             fill : "#252525",
@@ -1253,6 +1568,7 @@ environments[9] = {
                 const nArrow = new Konva.Arrow({
                     stroke : "#666666",
                     fill : "#666666",
+                    strokeWidth : 2,
                     points : [],
                 });
 
@@ -1288,6 +1604,8 @@ environments[9] = {
                 this.uLayer.add(nArrow);
                 this.uLayer.add(cut);
                 this.uLayer.add(nLabel);
+
+                nArrow.moveToBottom();
             };
             this.updateArrows();
         }
@@ -1297,7 +1615,7 @@ environments[9] = {
                 const n = N.next.get(node);
                 n.arrow.destroy();
                 n.txt.destroy();
-                N.cut.destroy();
+                n.cut.destroy();
                 N.next.delete(node);
             }
             this.updateArrows();
@@ -1306,16 +1624,28 @@ environments[9] = {
         N.kGroup.on("dragmove", this.updateArrows);
 
         N.label.on("mouseenter", () => {
+            if (environments[9].dj.active) {
+                return;
+            }
+
             this.hoverNode = N;
             N.Box.setAttr("fill", "#cde7c1");
         });
 
         N.label.on("mouseout", () => {
+            if (environments[9].dj.active) {
+                return;
+            }
+
             this.hoverNode = null;
             N.Box.setAttr("fill", "#b6d7a8");
         });
 
         N.kGroup.on("click", () => {
+            if (environments[9].dj.active) {
+                return;
+            }
+
             N.toggleSelect();
         });
 
@@ -1327,6 +1657,10 @@ environments[9] = {
     },
 
     keyDown : function(key) {
+        if (environments[9].dj.active) {
+            return;
+        }
+
         if (key.length == 1 && key != " " && Number.isFinite(+key)) {
             if (this.isInputHover) {
                 this.input = parseInt(key.toString());
@@ -1370,14 +1704,6 @@ environments[9] = {
             buttons[key] = newButton;
             i++;
         });
-
-        this.displayer.setAttr("text", "Current List: None");
-        this.displayer.setAttr("x", stage.width()/2 - 280);
-        this.displayer.setAttr("y", stage.height() - 115);
-        this.displayer.setAttr("fill", "#737070");
-        this.displayer.setAttr("fontSize", 13);
-        this.displayer.setAttr("fontStyle", "italic");
-        this.displayer.setAttr("fontFamily", "DM Sans");
 
         const iBox = new Konva.Rect({
             x : stage.width()/2 - 395,
@@ -1478,14 +1804,20 @@ environments[9] = {
 
         this.st_nodes.forEach((n) => {
             const node = this.makeNode();
-            node.kGroup.x(n[0]*20);
-            node.kGroup.y(n[1]*20);
+            node.kGroup.x(n[0] * 1.5 + 100);
+            node.kGroup.y(n[1]);
             starters.push(node);
+
+            this.uLayer.add(node.kGroup);
         });
 
-        this.st_nodes.forEach((n) => {
-            
-        });
+        for (let i = 0; i < this.st_nodes.length; i++) {
+            this.st_nodes[i][2].forEach((e) => {
+                starters[i].addNode(starters[e[0]], e[1]);
+            });
+        }
+
+        djAddButtons(this, this.uLayer, stage);
     },
 };
 
