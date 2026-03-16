@@ -1,3 +1,4 @@
+// @ts-nocheck
 const Konva = window.Konva;
 
 // ── Theme switching ──
@@ -414,7 +415,7 @@ environments[1] = {
                 arrow.points([60, 20, nextGroup.x() - link.kGroup.x(), nextGroup.y() + 20 - link.kGroup.y()]);
             }
             t.updateDisplay(t.selectedLink);
-        })
+        });
     },
 
     boxUpdate : function() {},
@@ -1130,14 +1131,220 @@ environments[9] = {
     uLayer : e9uLayer,
     isInputHover : false,
     displayer : new Konva.Text({}),
-    input : 0,
+    selectedNode : null,
+    input : 1,
+    output : "Null",
+    hoverNode : null,
+    points : [
+        [0, 16],
+        [21, 0],
+        [42, 16],
+        [21, 32],
+    ],
 
-    keyDown : function() {
+    st_nodes : [
+        [0, 2, [[1, 2], [2, 1]]],
+        [2, 1, [[3, 11], [4, 3], [2, 5]]],
+        [4, 3, [[4, 1], [5, 15]]],
+        [6, 0, [[4, 2], [6, 1]]],
+        [6, 2, [[6, 5], [5, 4]]],
+        [6, 4, [[6, 1]]],
+        [8, 2, []],
+    ],
 
+    getPoints : function(x, y) {
+        let tp;
+        let dist = Infinity;
+
+        this.points.forEach(p => {
+            const d = (p[0] - x)**2 + (p[1] - y)**2
+            if (d < dist) {
+                dist = d
+                tp = p
+            }
+        });
+
+        return tp;
+    },
+
+    updateArrows : function() {
+        const t = environments[9];
+        t.nodes.forEach((node) => {
+            t.nodes.forEach((node2) => {
+                if (node.next.has(node2)) {
+                    const connection = node.next.get(node2);
+
+                    const p = environments[9].getPoints(node2.kGroup.x() + 21 - node.kGroup.x(), node2.kGroup.y() + 16 - node.kGroup.y());
+                    const pi = environments[9].getPoints(node.kGroup.x() + 21 - node2.kGroup.x(), node.kGroup.y() + 16 - node2.kGroup.y());
+
+                    if (p && pi) {
+                        connection.arrow.points([
+                            node.kGroup.x() + p[0],
+                            node.kGroup.y() + p[1],
+                            node2.kGroup.x() + pi[0],
+                            node2.kGroup.y() + pi[1],
+                        ]);
+                        connection.arrow.show();
+
+                        connection.txt.x((node.kGroup.x() + p[0] + node2.kGroup.x() + pi[0])/2 - 9);
+                        connection.txt.y((node.kGroup.y() + p[1] + node2.kGroup.y() + pi[1])/2 - 9);
+
+                        connection.cut.x((node.kGroup.x() + p[0] + node2.kGroup.x() + pi[0])/2);
+                        connection.cut.y((node.kGroup.y() + p[1] + node2.kGroup.y() + pi[1])/2);
+                    }
+                }
+            });
+        });
+    },
+
+    makeNode : function() {
+        const N = {}
+        N.next = new WeakMap();
+        N.selected = false;
+
+        N.Box = new Konva.Rect({
+            x : 0,
+            y : 0,
+            width : 42,
+            height : 32,
+            fill : "#b6d7a8",
+            stroke : "#666666",
+        });
+
+        N.label = new Konva.Text({
+            x : 0,
+            y : 0,
+            width : 42,
+            height : 32,
+            text : String.fromCharCode((this.nodes.size % 26) + 65) + (Math.floor(this.nodes.size / 26) || "").toString(),
+            fontSize : 14,
+            align : "center",
+            verticalAlign : "middle",
+            fill : "#252525",
+            fontFamily : "DM Sans",
+        });
+
+        N.kGroup = new Konva.Group({
+            draggable : true,
+            x : 50,
+            y : 50,
+        });
+
+        N.toggleSelect = () => {
+            N.selected = !N.selected;
+            N.Box.setAttr("stroke", N.selected ? "#efd062" : "#666666");
+            if (N.selected) {
+                if (this.selectedNode) {
+                    this.selectedNode.toggleSelect();
+                }
+                tooltip.setText("edit_next", "Hover on a node and press space/backspace to add/remove next", 1)
+                this.selectedNode = N;
+            } else {
+                tooltip.delText("edit_next");
+                this.selectedNode = null;
+            }
+        }
+
+        N.addNode = (node, dist) => {
+            if (N.next.has(node)) {
+                N.next.get(node).len = dist;
+                N.next.get(node).txt.setAttr("text", dist.toString());
+            } else {
+                const nArrow = new Konva.Arrow({
+                    stroke : "#666666",
+                    fill : "#666666",
+                    points : [],
+                });
+
+                const nLabel = new Konva.Text({
+                    x : 0,
+                    y : 0,
+                    width : 18,
+                    height : 18,
+                    text : dist.toString(),
+                    fontSize : 18,
+                    align : "center",
+                    verticalAlign : "middle",
+                    fill : "#4b4b4b",
+                    fontStyle : "normal",
+                    fontFamily : "DM Sans",
+                });
+
+                const cut = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    radius : 22,
+                    globalCompositeOperation : "destination-out",
+                });
+
+                N.next.set(node, {
+                    len : dist,
+                    arrow : nArrow,
+                    txt : nLabel,
+                    cut : cut,
+                });
+
+                this.uLayer.add(nArrow);
+                this.uLayer.add(cut);
+                this.uLayer.add(nLabel);
+            };
+            this.updateArrows();
+        }
+
+        N.delNode = (node) => {
+            if (N.next.has(node)) {
+                const n = N.next.get(node);
+                n.arrow.destroy();
+                n.txt.destroy();
+                N.cut.destroy();
+                N.next.delete(node);
+            }
+            this.updateArrows();
+        }
+
+        N.kGroup.on("dragmove", this.updateArrows);
+
+        N.label.on("mouseenter", () => {
+            this.hoverNode = N;
+            N.Box.setAttr("fill", "#cde7c1");
+        });
+
+        N.label.on("mouseout", () => {
+            this.hoverNode = null;
+            N.Box.setAttr("fill", "#b6d7a8");
+        });
+
+        N.kGroup.on("click", () => {
+            N.toggleSelect();
+        });
+
+        N.kGroup.add(N.Box);
+        N.kGroup.add(N.label);
+        this.nodes.add(N);
+
+        return N
+    },
+
+    keyDown : function(key) {
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                this.input = parseInt(key.toString());
+                this.boxUpdate();
+            };
+        };
+
+        if (this.selectedNode && this.hoverNode && this.selectedNode != this.hoverNode) {
+            if (key == " " && this.input > 0) {
+                this.selectedNode.addNode(this.hoverNode, this.input);
+            } else if (key == "Backspace") {
+                console.log('go');
+                this.selectedNode.delNode(this.hoverNode);
+            }
+        };
     },
     
     start : function() {
-        
         let buttons = {}
         let hasInput = new Set();
 
@@ -1194,7 +1401,7 @@ environments[9] = {
         });
 
         const iBoxInput = new Konva.Text({
-            text : "0",
+            text : "1",
             x : stage.width()/2 - 395,
             y : stage.height() - 90,
             width : 90,
@@ -1267,6 +1474,18 @@ environments[9] = {
         this.uLayer.add(oBoxOutput);
         this.uLayer.add(this.displayer);
         
+        const starters = [];
+
+        this.st_nodes.forEach((n) => {
+            const node = this.makeNode();
+            node.kGroup.x(n[0]*20);
+            node.kGroup.y(n[1]*20);
+            starters.push(node);
+        });
+
+        this.st_nodes.forEach((n) => {
+            
+        });
     },
 };
 
