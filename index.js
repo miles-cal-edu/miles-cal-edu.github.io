@@ -25,7 +25,7 @@ const defaultItems = [
     { id: 5, label: 'Maps' },
     { id: 6, label: 'Red Black Trees' },
     { id: 7, label: 'Heaps' },
-    { id: 8, label: 'Graph/Tree Traversals' },
+    { id: 8, label: 'Graph Traversals' },
     { id: 9, label: 'Dijkstra\'s Algorithm' },
     { id: 10, label: 'Prim\'s Algorithm' },
     { id: 11, label: 'Hashing' },
@@ -924,35 +924,1482 @@ environments[1] = {
 const e3Layer = new Konva.Group(gAttr);
 const e3uLayer = new Konva.Group(gAttr);
 environments[3] = {
+    started      : false,
+    nodes        : new Set(),
+    layer        : e3Layer,
+    uLayer       : e3uLayer,
+    isInputHover : false,
+    displayer    : new Konva.Text({}),
+    input        : 0,
+    lastInput    : 0,
+    output       : "null",
+
+    // ── DSU data (negative-weight WQU) ───────────────────────
+    // id[i] < 0  →  i is a root, subtree size = -id[i]
+    // id[i] >= 0 →  id[i] is i's parent
+    N        : 10,
+    id       : [],
+    nodeObjs : [],
+    selected : -1,   // representative of selected group, or -1
+
+    // ── visual constants ──────────────────────────────────────
+    NODE_W   : 40,
+    NODE_H   : 36,
+    H_GAP    : 14,
+    TREE_GAP : 28,
+    V_GAP    : 58,
+    TOP_Y    : 60,
+
+    COLOR_DEFAULT  : "#b7d7a8",
+    COLOR_SELECTED : "#efd062",
+    COLOR_STROKE   : "#555555",
+
+    // ── DSU operations ────────────────────────────────────────
+    find : function(i) {
+        while (this.id[i] >= 0) i = this.id[i];
+        return i;
+    },
+
+    union : function(a, b) {
+        const ra = this.find(a);
+        const rb = this.find(b);
+        if (ra === rb) return false;
+        // more-negative = larger tree; attach smaller under larger
+        if (this.id[ra] <= this.id[rb]) {
+            this.id[ra] += this.id[rb];
+            this.id[rb]  = ra;
+        } else {
+            this.id[rb] += this.id[ra];
+            this.id[ra]  = rb;
+        }
+        return true;
+    },
+
+    isConnected : function(a, b) {
+        return this.find(a) === this.find(b);
+    },
+
+    resetDSU : function() {
+        for (let i = 0; i < this.N; i++) this.id[i] = -1;
+        this.clearSelection();
+    },
+
+    // ── selection (whole group) ───────────────────────────────
+    getGroup : function(i) {
+        const root = this.find(i);
+        const g = [];
+        for (let j = 0; j < this.N; j++) {
+            if (this.find(j) === root) g.push(j);
+        }
+        return g;
+    },
+
+    clearSelection : function() {
+        if (this.selected === -1) return;
+        for (const j of this.getGroup(this.selected)) {
+            this.nodeObjs[j].box.stroke(this.COLOR_STROKE);
+            this.nodeObjs[j].box.strokeWidth(2);
+        }
+        this.selected = -1;
+    },
+
+    selectGroup : function(i) {
+        this.clearSelection();
+        this.selected = i;
+        for (const j of this.getGroup(i)) {
+            this.nodeObjs[j].box.stroke(this.COLOR_SELECTED);
+            this.nodeObjs[j].box.strokeWidth(3);
+        }
+    },
+
+    // ── layout helpers ────────────────────────────────────────
+    getChildren : function(i) {
+        const ch = [];
+        for (let c = 0; c < this.N; c++) {
+            if (this.id[c] === i) ch.push(c);
+        }
+        return ch;
+    },
+
+    subtreeWidth : function(i) {
+        const ch = this.getChildren(i);
+        if (ch.length === 0) return this.NODE_W;
+        const total = ch.reduce((s, c) => s + this.subtreeWidth(c), 0);
+        return Math.max(this.NODE_W, total + this.H_GAP * (ch.length - 1));
+    },
+
+    layoutSubtree : function(i, left, y, pos) {
+        const ch = this.getChildren(i);
+        if (ch.length === 0) {
+            pos[i] = { x: left + this.NODE_W / 2, y };
+            return;
+        }
+        let cx = left;
+        for (const c of ch) {
+            const w = this.subtreeWidth(c);
+            this.layoutSubtree(c, cx, y + this.V_GAP, pos);
+            cx += w + this.H_GAP;
+        }
+        pos[i] = {
+            x : (pos[ch[0]].x + pos[ch[ch.length - 1]].x) / 2,
+            y,
+        };
+    },
+
+    // ── reposition (after structural change) ──────────────────
+    reposition : function() {
+        const roots = [];
+        for (let i = 0; i < this.N; i++) {
+            if (this.id[i] < 0) roots.push(i);
+        }
+
+        const treeSizes = roots.map(r => this.subtreeWidth(r));
+        const totalW    = treeSizes.reduce((a, b) => a + b, 0)
+                        + this.TREE_GAP * (roots.length - 1);
+        let startX = stage.width() / 2 - totalW / 2;
+
+        const pos = new Array(this.N);
+        for (let ri = 0; ri < roots.length; ri++) {
+            this.layoutSubtree(roots[ri], startX, this.TOP_Y, pos);
+            startX += treeSizes[ri] + this.TREE_GAP;
+        }
+
+        for (let i = 0; i < this.N; i++) {
+            this.nodeObjs[i].kGroup.x(pos[i].x - this.NODE_W / 2);
+            this.nodeObjs[i].kGroup.y(pos[i].y);
+        }
+
+        this.refreshEdges();
+        this.updateDisplayer();
+    },
+
+    // ── edges from current kGroup positions ───────────────────
+    refreshEdges : function() {
+        for (let i = 0; i < this.N; i++) {
+            const obj = this.nodeObjs[i];
+            if (this.id[i] < 0) {
+                if (obj.parentLine) obj.parentLine.visible(false);
+            } else {
+                const p   = this.id[i];
+                const par = this.nodeObjs[p];
+                const px  = par.kGroup.x() + this.NODE_W / 2;
+                const py  = par.kGroup.y() + this.NODE_H;
+                const cx  = obj.kGroup.x() + this.NODE_W / 2;
+                const cy  = obj.kGroup.y();
+
+                if (!obj.parentLine) {
+                    obj.parentLine = new Konva.Line({
+                        points      : [px, py, cx, cy],
+                        stroke      : "#888888",
+                        strokeWidth : 2,
+                        listening   : false,
+                    });
+                    this.layer.add(obj.parentLine);
+                    obj.parentLine.moveToBottom();
+                } else {
+                    obj.parentLine.points([px, py, cx, cy]);
+                    obj.parentLine.visible(true);
+                }
+            }
+        }
+    },
+
+    updateDisplayer : function() {
+        this.displayer.setAttr("text", "id: [" + this.id.join(", ") + "]");
+    },
+
+    // ── visual node factory ───────────────────────────────────
+    makeNodeObj : function(i) {
+        const obj  = {};
+        obj.idx        = i;
+        obj.parentLine = null;
+
+        obj.box = new Konva.Rect({
+            x : 0, y : 0,
+            width       : this.NODE_W,
+            height      : this.NODE_H,
+            fill        : this.COLOR_DEFAULT,
+            stroke      : this.COLOR_STROKE,
+            strokeWidth : 2,
+        });
+
+        obj.label = new Konva.Text({
+            x : 0, y : 0,
+            width         : this.NODE_W,
+            height        : this.NODE_H,
+            text          : i.toString(),
+            fontSize      : 15,
+            align         : "center",
+            verticalAlign : "middle",
+            fill          : "#252525",
+            fontFamily    : "DM Sans",
+        });
+
+        obj.kGroup = new Konva.Group({ x: 0, y: 0, draggable: true });
+        obj.kGroup.add(obj.box);
+        obj.kGroup.add(obj.label);
+
+        // ── group drag ────────────────────────────────────────
+        obj.kGroup.on("dragstart", () => {
+            const group = this.getGroup(i);
+            obj._dragPeers = group.filter(j => j !== i).map(j => ({
+                idx    : j,
+                startX : this.nodeObjs[j].kGroup.x(),
+                startY : this.nodeObjs[j].kGroup.y(),
+            }));
+            obj._dragOriginX = obj.kGroup.x();
+            obj._dragOriginY = obj.kGroup.y();
+        });
+
+        obj.kGroup.on("dragmove", () => {
+            const dx = obj.kGroup.x() - obj._dragOriginX;
+            const dy = obj.kGroup.y() - obj._dragOriginY;
+            for (const peer of obj._dragPeers) {
+                this.nodeObjs[peer.idx].kGroup.x(peer.startX + dx);
+                this.nodeObjs[peer.idx].kGroup.y(peer.startY + dy);
+            }
+            this.refreshEdges();
+        });
+
+        obj.kGroup.on("dragend", () => {
+            obj._dragPeers   = null;
+            this.refreshEdges();
+        });
+
+        // ── group click-select ────────────────────────────────
+        obj.kGroup.on("click", () => {
+            const sameGroup = this.selected !== -1 &&
+                              this.find(i) === this.find(this.selected);
+            if (sameGroup) {
+                this.clearSelection();
+            } else {
+                this.selectGroup(i);
+            }
+        });
+
+        this.nodes.add(obj);
+        this.layer.add(obj.kGroup);
+        return obj;
+    },
+
+    // ── key handler ───────────────────────────────────────────
+    keyDown : function(key) {
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                this.input = parseInt(key);
+                this.boxUpdate();
+            }
+        }
+    },
+
+    // ── start ─────────────────────────────────────────────────
+    start : function() {
+        for (let i = 0; i < this.N; i++) {
+            this.id[i]       = -1;
+            this.nodeObjs[i] = this.makeNodeObj(i);
+        }
+        this.reposition();
+
+        const buttons  = {};
+        const hasInput = new Set(["connect", "isConnected"]);
+
+        buttons.connect = () => {
+            if (this.selected === -1) return;
+            const a = this.selected;
+            const b = this.input;
+            if (b < 0 || b >= this.N) return;
+            const merged = this.union(a, b);
+            this.output = merged ? "connected" : "same set";
+            // re-select to refresh group highlight after merge
+            const rep = this.find(a);
+            this.selected = -1;
+            this.selectGroup(rep);
+            this.reposition();
+            this.boxUpdate();
+        };
+
+        buttons.isConnected = () => {
+            if (this.selected === -1) return;
+            const b = this.input;
+            if (b < 0 || b >= this.N) return;
+            this.output = this.isConnected(this.selected, b) ? "true" : "false";
+            this.boxUpdate();
+        };
+
+        buttons.reset = () => {
+            this.resetDSU();
+            this.reposition();
+            this.output = "null";
+            this.boxUpdate();
+        };
+
+        let i = 0;
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = callback;
+            this.uLayer.add(newButton.kGroup);
+            buttons[key] = newButton;
+            i++;
+        });
+
+        this.displayer.setAttr("x", stage.width() / 2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width() / 2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const iBoxInput = new Konva.Text({
+            text : "0",
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width() / 2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press 0-9 to set value", 3);
+        });
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
+    },
+};
+
+// 4 : BSTs
+
+const e4Layer = new Konva.Group(gAttr);
+const e4uLayer = new Konva.Group(gAttr);
+environments[4] = {
+    started      : false,
+    nodes        : new Set(),
+    layer        : e4Layer,
+    uLayer       : e4uLayer,
+    isInputHover : false,
+    displayer    : new Konva.Text({}),
+    input        : 50,
+    lastInput    : 0,
+    activeAction : false,
+    output       : "null",
+ 
+    // BST structural root
+    bstRoot : null,
+ 
+    // ── visual constants ──────────────────────────────────────
+    NODE_W    : 65,
+    NODE_H    : 40,
+    H_GAP     : 28,   // horizontal gap between siblings at the leaf level
+    V_GAP     : 64,   // vertical gap between levels
+ 
+    // ── code-visualizer panel ────────────────────────────────
+    // Will be created in start()
+    codeLines     : null,   // Konva.Text[]  (one per line)
+    codePanel     : null,   // Konva.Rect (background)
+    codeHighlight : null,   // Konva.Rect (highlight bar)
+ 
+    CODE : {
+        preorder  : [
+            { label : "traverse(node):",           },
+            { label : "  if node == null: return", },
+            { label : "  action(node)",            },
+            { label : "  traverse(node.left)",         },
+            { label : "  traverse(node.right)",       },
+        ],
+        inorder   : [
+            { label : "traverse(node):",           },
+            { label : "  if node == null: return", },
+            { label : "  traverse(node.left)",         },
+            { label : "  action(node)",            },
+            { label : "  traverse(node.right)",       },
+        ],
+        postorder : [
+            { label : "traverse(node):",           },
+            { label : "  if node == null: return", },
+            { label : "  traverse(node.left)",         },
+            { label : "  traverse(node.right)",       },
+            { label : "  action(node)",            },
+        ],
+    },
+    
+    // indices into the above per order: [left, action, right]
+    CODE_IDX : {
+        preorder  : { action: 2, left: 3, right: 4 },
+        inorder   : { action: 3, left: 2, right: 4 },
+        postorder : { action: 4, left: 2, right: 3 },
+    },
+ 
+    // line indices for traversal orders
+    TRAVERSAL_LINES : {
+        preorder  : [2, 3, 4],  // action BEFORE children → show action then left then right
+        inorder   : [2, 3, 4],  // same code lines; order of highlighting differs — we pass order explicitly
+        postorder : [2, 3, 4],
+    },
+ 
+    // ── internal BST node factory ────────────────────────────
+    makeBSTNode : function(value, x, y) {
+        const N       = {};
+        N.value       = value;
+        N.left        = null;
+        N.right       = null;
+        N.parent      = null;
+ 
+        // konva shapes
+        N.box = new Konva.Rect({
+            x : 0, y : 0,
+            width  : this.NODE_W,
+            height : this.NODE_H,
+            fill   : "#b1dd8b",
+            stroke : "#666666",
+            strokeWidth : 2,
+            cornerRadius : 0,
+        });
+ 
+        N.label = new Konva.Text({
+            x : 0, y : 0,
+            width  : this.NODE_W,
+            height : this.NODE_H,
+            text   : value.toString(),
+            fontSize       : 14,
+            align          : "center",
+            verticalAlign  : "middle",
+            fill           : "#252525",
+            fontFamily     : "DM Sans",
+        });
+ 
+        N.kGroup = new Konva.Group({
+            draggable : false,
+            x : x,
+            y : y,
+        });
+ 
+        N.kGroup.add(N.box);
+        N.kGroup.add(N.label);
+ 
+        // edge lines (drawn from parent)
+        N.edgeLine = null; // Konva.Line, created when attached to parent
+ 
+        this.nodes.add(N);
+        this.layer.add(N.kGroup);
+        return N;
+    },
+ 
+    // ── BST insert (by value) ────────────────────────────────
+    bstInsert : function(value) {
+        if (this.bstRoot === null) {
+            const cx = stage.width() / 2 - this.NODE_W / 2;
+            const cy = 60;
+            this.bstRoot = this.makeBSTNode(value, cx, cy);
+            return;
+        }
+ 
+        let cur    = this.bstRoot;
+        let placed = false;
+        while (!placed) {
+            if (value < cur.value) {
+                if (cur.left === null) {
+                    cur.left = this.makeBSTNode(value, 0, 0);
+                    cur.left.parent = cur;
+                    placed = true;
+                } else {
+                    cur = cur.left;
+                }
+            } else if (value > cur.value) {
+                if (cur.right === null) {
+                    cur.right = this.makeBSTNode(value, 0, 0);
+                    cur.right.parent = cur;
+                    placed = true;
+                } else {
+                    cur = cur.right;
+                }
+            } else {
+                // duplicate — do nothing
+                placed = true;
+                return;
+            }
+        }
+        this.reposition();
+    },
+ 
+    // ── BST search ───────────────────────────────────────────
+    bstSearch : function(value) {
+        let cur = this.bstRoot;
+        while (cur !== null) {
+            if (value === cur.value) return true;
+            cur = value < cur.value ? cur.left : cur.right;
+        }
+        return false;
+    },
+ 
+    // ── reposition all nodes using in-order x assignment ────
+    reposition : function() {
+        // 1. Assign x positions via in-order traversal counter
+        let counter = 0;
+        const xSlot = new Map();
+ 
+        const assignX = (node) => {
+            if (!node) return;
+            assignX(node.left);
+            xSlot.set(node, counter++);
+            assignX(node.right);
+        };
+        assignX(this.bstRoot);
+ 
+        const total  = counter;
+        const slotW  = this.NODE_W + this.H_GAP;
+        const startX = stage.width() / 2 - (total * slotW) / 2;
+ 
+        // 2. Assign y positions by depth
+        const setPositions = (node, depth) => {
+            if (!node) return;
+            const nx = startX + xSlot.get(node) * slotW;
+            const ny = 60 + depth * this.V_GAP;
+            node.kGroup.x(nx);
+            node.kGroup.y(ny);
+            setPositions(node.left,  depth + 1);
+            setPositions(node.right, depth + 1);
+        };
+        setPositions(this.bstRoot, 0);
+ 
+        // 3. Update / create edge lines
+        this.updateEdges(this.bstRoot);
+    },
+ 
+    updateEdges : function(node) {
+        if (!node) return;
+ 
+        const drawEdge = (child) => {
+            if (!child) return;
+            const px = node.kGroup.x()  + this.NODE_W / 2;
+            const py = node.kGroup.y()  + this.NODE_H;
+            const cx = child.kGroup.x() + this.NODE_W / 2;
+            const cy = child.kGroup.y();
+ 
+            if (!child.edgeLine) {
+                child.edgeLine = new Konva.Arrow({
+                    points      : [px, py, cx, cy],
+                    stroke      : "#666666",
+                    fill        : "#666666",
+                    strokeWidth : 1.4,
+                    listening   : false,
+                });
+                this.layer.add(child.edgeLine);
+                child.edgeLine.moveToBottom();
+            } else {
+                child.edgeLine.points([px, py, cx, cy]);
+            }
+        };
+ 
+        drawEdge(node.left);
+        drawEdge(node.right);
+        this.updateEdges(node.left);
+        this.updateEdges(node.right);
+    },
+ 
+    // ── clear entire tree ────────────────────────────────────
+    clearTree : function() {
+        this.nodes.forEach(n => {
+            n.kGroup.destroy();
+            if (n.edgeLine) n.edgeLine.destroy();
+        });
+        this.nodes.clear();
+        this.bstRoot  = null;
+    },
+ 
+    // ── code visualizer helpers ──────────────────────────────
+    highlightCodeLine : function(lineIdx) {
+        if (!this.codeHighlight || lineIdx === null) {
+            if (this.codeHighlight) this.codeHighlight.visible(false);
+            return;
+        }
+        const LINE_H = 20;
+        const panelX = this.codePanel.x();
+        const panelY = this.codePanel.y();
+        this.codeHighlight.x(panelX + 2);
+        this.codeHighlight.y(panelY + 8 + lineIdx * LINE_H);
+        this.codeHighlight.visible(true);
+    },
+ 
+    // ── traversal runner ────────────────────────────────────
+    runTraversal : async function(order) {
+        if (this.activeAction || !this.bstRoot) return;
+        this.activeAction = true;
+    
+        this.setCodeOrder(order);
+        const idx = this.CODE_IDX[order];
+    
+        // ── accumulate visited order here ────────────────────
+        const result = [];
+    
+        const stackColor = (depth) => { /* unchanged */ };
+    
+        const ACTION_COLOR = "#efd062";
+        const RETURN_COLOR = "#e8e8e8";
+    
+        const traverse = async (node, depth = 0) => {
+            if (!node) return;
+    
+            this.highlightCodeLine(1);
+            await sleep(360);
+    
+            node.box.fill(stackColor(depth));
+            node.box.strokeWidth(2);
+    
+            if (order === "preorder") {
+                result.push(node.value);                          // ← action fires here
+                this.displayer.text(order + ": [" + result.join(", ") + "]");
+                node.box.fill(ACTION_COLOR);
+                this.highlightCodeLine(idx.action);
+                await sleep(820);
+                node.box.fill(stackColor(depth));
+    
+                this.highlightCodeLine(idx.left);
+                await sleep(360);
+                await traverse(node.left, depth + 1);
+    
+                this.highlightCodeLine(idx.right);
+                await sleep(360);
+                await traverse(node.right, depth + 1);
+    
+            } else if (order === "inorder") {
+                this.highlightCodeLine(idx.left);
+                await sleep(360);
+                await traverse(node.left, depth + 1);
+    
+                result.push(node.value);                          // ← action fires here
+                this.displayer.text(order + ": [" + result.join(", ") + "]");
+                node.box.fill(ACTION_COLOR);
+                this.highlightCodeLine(idx.action);
+                await sleep(820);
+                node.box.fill(stackColor(depth));
+    
+                this.highlightCodeLine(idx.right);
+                await sleep(360);
+                await traverse(node.right, depth + 1);
+    
+            } else {
+                this.highlightCodeLine(idx.left);
+                await sleep(360);
+                await traverse(node.left, depth + 1);
+    
+                this.highlightCodeLine(idx.right);
+                await sleep(360);
+                await traverse(node.right, depth + 1);
+    
+                result.push(node.value);                          // ← action fires here
+                this.displayer.text(order + ": [" + result.join(", ") + "]");
+                node.box.fill(ACTION_COLOR);
+                this.highlightCodeLine(idx.action);
+                await sleep(820);
+                node.box.fill(stackColor(depth));
+            }
+    
+            node.box.fill(RETURN_COLOR);
+            node.box.strokeWidth(2);
+            await sleep(320);
+        };
+    
+        this.highlightCodeLine(0);
+        await sleep(400);
+        await traverse(this.bstRoot);
+        this.highlightCodeLine(null);
+    
+        this.nodes.forEach(n => {
+            n.box.fill("#b1dd8b");
+            n.box.strokeWidth(2);
+        });
+    
+        this.activeAction = false;
+    },
+ 
+    // ── key handler ─────────────────────────────────────────
+    keyDown : function(key) {
+        if (this.activeAction) return;
+ 
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                if (Date.now() - this.lastInput < 500) {
+                    this.input = this.input * 10 + parseInt(key);
+                } else {
+                    this.input = parseInt(key);
+                }
+                this.lastInput = Date.now();
+                this.boxUpdate();
+            }
+        }
+    },
+ 
+    // ── start ────────────────────────────────────────────────
+    start : function() {
+        // ── Code Visualizer Panel ────────────────────────
+        const LINE_H   = 20;
+        const PANEL_W  = 230;
+        const PANEL_H  = 14 + this.CODE.length * LINE_H;
+        const PANEL_X  = 18;
+        const PANEL_Y  = 20;
+ 
+        this.codePanel = new Konva.Rect({
+            x      : PANEL_X,
+            y      : PANEL_Y,
+            width  : PANEL_W,
+            height : PANEL_H,
+            fill   : "#f0ede830",
+            stroke : "#aaaaaa",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+ 
+        this.codeHighlight = new Konva.Rect({
+            x       : PANEL_X + 2,
+            y       : PANEL_Y + 8,
+            width   : PANEL_W - 4,
+            height  : LINE_H - 2,
+            fill    : "#efd06240",
+            cornerRadius : 3,
+            visible : false,
+            listening : false,
+        });
+ 
+        this.uLayer.add(this.codePanel);
+        this.uLayer.add(this.codeHighlight);
+
+        this.codeLines = this.CODE.inorder.map((c, i) => {
+            const t = new Konva.Text({
+                x        : PANEL_X + 10,
+                y        : PANEL_Y + 8 + i * LINE_H,
+                width    : PANEL_W - 16,
+                height   : LINE_H,
+                text     : c.label,
+                fontSize : 12,
+                verticalAlign : "middle",
+                fill     : "#444444",
+                fontFamily : "DM Mono, monospace",
+            });
+            this.uLayer.add(t);
+            return t;
+        });
+
+        this.setCodeOrder = (order) => {
+            this.CODE[order].forEach((c, i) => {
+                this.codeLines[i].text(c.label);
+            });
+        };
+ 
+        // ── Buttons ───────────────────────────────────────
+        const buttons   = {};
+        const hasInput  = new Set(["add", "get"]);
+ 
+        buttons.add = () => {
+            if (this.activeAction) return;
+            this.bstInsert(this.input);
+        };
+ 
+        buttons.get = () => {
+            if (this.activeAction) return;
+            const found  = this.bstSearch(this.input);
+            this.output  = found ? "true" : "false";
+            // briefly highlight the found node
+            if (found) {
+                const highlight = async () => {
+                    let cur = this.bstRoot;
+                    while (cur) {
+                        cur.box.fill("#88d48b");
+                        await sleep(280);
+                        cur.box.fill("#b1dd8b");
+                        if (this.input === cur.value) break;
+                        cur = this.input < cur.value ? cur.left : cur.right;
+                    }
+                };
+                highlight();
+            }
+            this.boxUpdate();
+        };
+ 
+        buttons.clear = () => {
+            if (this.activeAction) return;
+            this.clearTree();
+            this.output = "null";
+            this.boxUpdate();
+        };
+ 
+        buttons.preorder  = () => this.runTraversal("preorder");
+        buttons.inorder   = () => this.runTraversal("inorder");
+        buttons.postorder = () => this.runTraversal("postorder");
+ 
+        let i = 0
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = () => {
+                if (!this.activeAction) {
+                    callback();
+                };
+            };
+            this.uLayer.add(newButton.kGroup);
+
+            buttons[key] = newButton;
+            i++;
+        });
+ 
+        // ── Input / Output boxes ──────────────────────────
+        this.displayer.setAttr("text", "");
+        this.displayer.setAttr("x", stage.width() / 2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+ 
+        const iBox = new Konva.Rect({
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width() / 2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const iBoxInput = new Konva.Text({
+            text : "50",
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+ 
+        const oBox = new Konva.Rect({
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width() / 2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+ 
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press digits to enter value", 3);
+        });
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+ 
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+ 
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
+ 
+        // ── Seed a small starter tree ─────────────────────
+        [50, 30, 70, 20, 40, 60, 80].forEach(v => this.bstInsert(v));
+    },
+};
+
+// 7 : Heap
+
+const e7Layer = new Konva.Group(gAttr);
+const e7uLayer = new Konva.Group(gAttr);
+environments[7] = {
+    started      : false,
+    nodes        : new Set(),
+    layer        : e7Layer,
+    uLayer       : e7uLayer,
+    isInputHover : false,
+    displayer    : new Konva.Text({}),
+    input        : 5,
+    lastInput    : 0,
+    activeAction : false,
+    output       : "null",
+
+    // internal heap array and parallel visual node array
+    heap      : [],
+    heapNodes : [],
+
+    // ── visual constants ──────────────────────────────────────
+    NODE_R : 20,   // circle radius
+    H_GAP  : 18,   // horizontal gap between siblings at leaf level
+    V_GAP  : 64,   // vertical gap between levels
+
+    // ── visual node factory ───────────────────────────────────
+    makeHeapNode : function(value, x, y) {
+        const N = {};
+        N.value = value;
+
+        N.box = new Konva.Circle({
+            x : 0, y : 0,
+            radius      : this.NODE_R,
+            fill        : "#cfe2f3",
+            stroke      : "#666666",
+            strokeWidth : 2,
+        });
+
+        N.label = new Konva.Text({
+            x : -this.NODE_R, y : -this.NODE_R,
+            width         : this.NODE_R * 2,
+            height        : this.NODE_R * 2,
+            text          : value.toString(),
+            fontSize      : 14,
+            align         : "center",
+            verticalAlign : "middle",
+            fill          : "#252525",
+            fontFamily    : "DM Sans",
+        });
+
+        N.kGroup = new Konva.Group({ x, y });
+        N.kGroup.add(N.box);
+        N.kGroup.add(N.label);
+        N.edgeLine = null;
+
+        this.nodes.add(N);
+        this.layer.add(N.kGroup);
+        return N;
+    },
+
+    // ── colors ────────────────────────────────────────────────
+    COLOR_DEFAULT : "#cfe2f3",
+    COLOR_ACTIVE  : "#efd062",   // yellow  – value being tracked
+    COLOR_SWAP    : "#f4a261",   // orange  – swap partner
+    COLOR_REMOVE  : "#e05c5c",   // red     – root being popped
+    COLOR_SETTLE  : "#b1e8b1",   // green   – settled in place
+
+    // ── heap operations ───────────────────────────────────────
+
+    // sync insert used for seeding (no animation)
+    _insertSync : function(value) {
+        this.heap.push(value);
+        this.heapNodes.push(this.makeHeapNode(value, 0, 0));
+        let i = this.heap.length - 1;
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (this.heap[p] <= this.heap[i]) break;
+            [this.heap[p], this.heap[i]] = [this.heap[i], this.heap[p]];
+            this.heapNodes[p].label.text(this.heap[p].toString());
+            this.heapNodes[i].label.text(this.heap[i].toString());
+            i = p;
+        }
+        this.reposition();
+        this.updateDisplayer();
+    },
+
+    heapInsert : async function(value) {
+        if (this.activeAction) return;
+        this.activeAction = true;
+
+        // add to array and create visual node, then position everything
+        this.heap.push(value);
+        this.heapNodes.push(this.makeHeapNode(value, 0, 0));
+        this.reposition();
+        this.updateDisplayer();
+
+        // highlight the newly added node
+        let i = this.heap.length - 1;
+        this.heapNodes[i].box.fill(this.COLOR_ACTIVE);
+        await sleep(300);
+
+        // animate bubble-up
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (this.heap[p] <= this.heap[i]) break;
+
+            this.heapNodes[p].box.fill(this.COLOR_SWAP);
+            await sleep(340);
+
+            [this.heap[p], this.heap[i]] = [this.heap[i], this.heap[p]];
+            this.heapNodes[p].label.text(this.heap[p].toString());
+            this.heapNodes[i].label.text(this.heap[i].toString());
+
+            // yellow cursor moves up to parent slot, old slot resets
+            this.heapNodes[i].box.fill(this.COLOR_DEFAULT);
+            this.heapNodes[p].box.fill(this.COLOR_ACTIVE);
+            this.updateDisplayer();
+            await sleep(340);
+
+            i = p;
+        }
+
+        // settle
+        this.heapNodes[i].box.fill(this.COLOR_SETTLE);
+        await sleep(380);
+        this.heapNodes[i].box.fill(this.COLOR_DEFAULT);
+
+        this.activeAction = false;
+    },
+
+    heapPop : async function() {
+        if (this.heap.length === 0) { this.output = "null"; return; }
+        if (this.activeAction) return;
+        this.activeAction = true;
+
+        const min   = this.heap[0];
+        this.output = min.toString();
+
+        // highlight root red – about to be removed
+        this.heapNodes[0].box.fill(this.COLOR_REMOVE);
+        await sleep(480);
+
+        const lastVal  = this.heap.pop();
+        const lastNode = this.heapNodes.pop();
+        lastNode.kGroup.destroy();
+        if (lastNode.edgeLine) lastNode.edgeLine.destroy();
+        this.nodes.delete(lastNode);
+
+        if (this.heap.length === 0) {
+            this.updateDisplayer();
+            this.activeAction = false;
+            return;
+        }
+
+        // move last value to root slot, highlight yellow
+        this.heap[0] = lastVal;
+        this.heapNodes[0].label.text(lastVal.toString());
+        this.heapNodes[0].box.fill(this.COLOR_ACTIVE);
+        this.updateDisplayer();
+        await sleep(340);
+
+        // animate sift-down
+        let i = 0;
+        while (true) {
+            const n = this.heap.length;
+            const l = 2*i+1, r = 2*i+2;
+            let s = i;
+            if (l < n && this.heap[l] < this.heap[s]) s = l;
+            if (r < n && this.heap[r] < this.heap[s]) s = r;
+            if (s === i) break;
+
+            this.heapNodes[s].box.fill(this.COLOR_SWAP);
+            await sleep(340);
+
+            [this.heap[s], this.heap[i]] = [this.heap[i], this.heap[s]];
+            this.heapNodes[s].label.text(this.heap[s].toString());
+            this.heapNodes[i].label.text(this.heap[i].toString());
+
+            // yellow cursor sinks down to child slot, old slot resets
+            this.heapNodes[i].box.fill(this.COLOR_DEFAULT);
+            this.heapNodes[s].box.fill(this.COLOR_ACTIVE);
+            this.updateDisplayer();
+            await sleep(340);
+
+            i = s;
+        }
+
+        // settle
+        this.heapNodes[i].box.fill(this.COLOR_SETTLE);
+        await sleep(380);
+        this.heapNodes[i].box.fill(this.COLOR_DEFAULT);
+
+        this.activeAction = false;
+    },
+
+    // ── layout ────────────────────────────────────────────────
+    reposition : function() {
+        const n = this.heap.length;
+        if (n === 0) return;
+
+        const maxDepth = Math.floor(Math.log2(n));
+        const slotW    = this.NODE_R * 2 + this.H_GAP;
+        const totalW   = Math.pow(2, maxDepth) * slotW;
+
+        for (let i = 0; i < n; i++) {
+            const d   = Math.floor(Math.log2(i + 1));
+            const pos = i - (Math.pow(2, d) - 1);
+            const levelSlotW = totalW / Math.pow(2, d);
+            const x = stage.width() / 2 - totalW / 2 + (pos + 0.5) * levelSlotW;
+            const y = 60 + d * this.V_GAP;
+            this.heapNodes[i].kGroup.x(x);
+            this.heapNodes[i].kGroup.y(y);
+        }
+
+        this.updateEdges();
+    },
+
+    updateEdges : function() {
+        const n = this.heap.length;
+        for (let i = 1; i < n; i++) {
+            const p   = (i - 1) >> 1;
+            const par = this.heapNodes[p];
+            const ch  = this.heapNodes[i];
+            const px  = par.kGroup.x();
+            const py  = par.kGroup.y();
+            const cx  = ch.kGroup.x();
+            const cy  = ch.kGroup.y();
+
+            if (!ch.edgeLine) {
+                ch.edgeLine = new Konva.Line({
+                    points      : [px, py, cx, cy],
+                    stroke      : "#666666",
+                    strokeWidth : 1.4,
+                    listening   : false,
+                });
+                this.layer.add(ch.edgeLine);
+                ch.edgeLine.moveToBottom();
+            } else {
+                ch.edgeLine.points([px, py, cx, cy]);
+            }
+        }
+    },
+
+    updateDisplayer : function() {
+        this.displayer.setAttr("text", "heap: [" + this.heap.join(", ") + "]");
+    },
+
+    // ── clear ─────────────────────────────────────────────────
+    clearHeap : function() {
+        this.heapNodes.forEach(n => {
+            n.kGroup.destroy();
+            if (n.edgeLine) n.edgeLine.destroy();
+        });
+        this.heapNodes = [];
+        this.nodes.clear();
+        this.heap   = [];
+        this.output = "null";
+        this.updateDisplayer();
+    },
+
+    // ── key handler ───────────────────────────────────────────
+    keyDown : function(key) {
+        if (this.activeAction) return;
+
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                if (Date.now() - this.lastInput < 500) {
+                    this.input = this.input * 10 + parseInt(key);
+                } else {
+                    this.input = parseInt(key);
+                }
+                this.lastInput = Date.now();
+                this.boxUpdate();
+            }
+        }
+    },
+
+    // ── start ─────────────────────────────────────────────────
+    start : function() {
+        const buttons  = {};
+        const hasInput = new Set(["add"]);
+
+        buttons.add = () => {
+            this.heapInsert(this.input).then(() => this.boxUpdate());
+        };
+
+        buttons.pop = () => {
+            this.heapPop().then(() => this.boxUpdate());
+        };
+
+        buttons.clear = () => {
+            if (this.activeAction) return;
+            this.clearHeap();
+            this.boxUpdate();
+        };
+
+        let i = 0;
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = () => {
+                if (!this.activeAction) callback();
+            };
+            this.uLayer.add(newButton.kGroup);
+
+            buttons[key] = newButton;
+            i++;
+        });
+
+        // ── Input / Output boxes ──────────────────────────────
+        this.displayer.setAttr("text", "heap: []");
+        this.displayer.setAttr("x", stage.width() / 2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width() / 2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const iBoxInput = new Konva.Text({
+            text : "5",
+            x : stage.width() / 2 - 395,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#c0d4e03f", stroke : "#666666",
+            strokeWidth : 1, cornerRadius : 6,
+        });
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width() / 2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070", fontSize : 13,
+            fontStyle : "normal", fontFamily : "DM Sans",
+        });
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width() / 2 + 205,
+            y : stage.height() - 90,
+            width : 90, height : 30,
+            fill : "#737070", fontSize : 13,
+            fontFamily : "DM Sans",
+            align : "center", verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press digits to enter value", 3);
+        });
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
+
+        // ── Seed initial values ───────────────────────────────
+        [1, 5, 1, 6, 5, 6, 3, 7, 7, 8].forEach(v => this._insertSync(v));
+    },
+};
+
+// 8: Graph Traversals
+
+const e8Layer = new Konva.Group(gAttr);
+const e8uLayer = new Konva.Group(gAttr);
+environments[8] = {
     started : false,
     nodes : new Set(),
-    layer : e3Layer,
-    uLayer : e3uLayer,
+    layer : e8Layer,
+    uLayer : e8uLayer,
     isInputHover : false,
     displayer : new Konva.Text({}),
-    input : 0,
+    selectedNode : null,
+    input : 1,
+    output : "Null",
+    hoverNode : null,
+    lastInput : 0,
+    activeAction : false,
+
+    points : [
+        [0, 16],
+        [21, 0],
+        [42, 16],
+        [21, 32],
+    ],
+
+    st_nodes : [
+        // 0
+        [30,  130, [[1, 1], [3, 1]]],
+        // 1
+        [65,  210, [[0, 1], [4, 1]]],
+        // 2
+        [175, 30,  [[3, 1], [5, 1]]],
+        // 3
+        [175, 120, [[0, 1], [2, 1], [4, 1], [5, 1]]],
+        // 4
+        [175, 205, [[1, 1], [3, 1], [5, 1], [7, 1]]],
+        // 5
+        [275, 110, [[2, 1], [3, 1], [4, 1], [6, 1]]],
+        // 6
+        [295, 210, [[5, 1]]],
+        // 7
+        [175, 290, [[4, 1]]],
+    ],
+
+    getPoints : function(x, y) {
+        let tp;
+        let dist = Infinity;
+
+        this.points.forEach(p => {
+            const d = (p[0] - x)**2 + (p[1] - y)**2
+            if (d < dist) {
+                dist = d
+                tp = p
+            }
+        });
+
+        return tp;
+    },
+
+    updateArrows : function() {
+        const t = environments[8];
+        t.nodes.forEach((node) => {
+            t.nodes.forEach((node2) => {
+                if (node.next.has(node2)) {
+                    const connection = node.next.get(node2);
+
+                    const p = t.getPoints(node2.kGroup.x() + 21 - node.kGroup.x(), node2.kGroup.y() + 16 - node.kGroup.y());
+                    const pi = t.getPoints(node.kGroup.x() + 21 - node2.kGroup.x(), node.kGroup.y() + 16 - node2.kGroup.y());
+
+                    if (p && pi) {
+                        connection.arrow.points([
+                            node.kGroup.x() + p[0],
+                            node.kGroup.y() + p[1],
+                            node2.kGroup.x() + pi[0],
+                            node2.kGroup.y() + pi[1],
+                        ]);
+                        connection.arrow.show();
+                    }
+                }
+            });
+        });
+    },
 
     makeNode : function() {
         const N = {}
-
-        this.nodes.add(N);
+        N.next = new WeakMap();
+        N.selected = false;
 
         N.Box = new Konva.Rect({
             x : 0,
             y : 0,
-            width : 32,
+            width : 42,
             height : 32,
-            fill : "#b6d7a8",
-            stroke : "#bcbcbc",
+            fill : "#c9daf8",
+            stroke : "#666666",
         });
 
         N.label = new Konva.Text({
             x : 0,
             y : 0,
-            width : 32,
+            width : 42,
             height : 32,
-            text : (this.nodes.size - 1).toString(),
-            fontSize : 10,
+            text : String.fromCharCode((this.nodes.size % 26) + 65) + (Math.floor(this.nodes.size / 26) || "").toString(),
+            fontSize : 15,
             align : "center",
             verticalAlign : "middle",
             fill : "#252525",
@@ -965,28 +2412,113 @@ environments[3] = {
             y : 50,
         });
 
+        N.toggleSelect = () => {
+            N.selected = !N.selected;
+            N.Box.setAttr("stroke", N.selected ? "#efd062" : "#666666");
+            if (N.selected) {
+                if (this.selectedNode) {
+                    this.selectedNode.toggleSelect();
+                }
+                tooltip.setText("edit_next", "Hover on a node and press space/backspace to add/remove next", 1)
+                this.selectedNode = N;
+            } else {
+                tooltip.delText("edit_next");
+                this.selectedNode = null;
+            }
+        }
+
+        N.addNode = (node) => {
+            if (N.next.has(node)) {
+            } else {
+                const nArrow = new Konva.Arrow({
+                    stroke : "#666666",
+                    fill : "#666666",
+                    strokeWidth : 1.7,
+                    points : [],
+                });
+
+                N.next.set(node, {
+                    arrow : nArrow,
+                });
+
+                this.uLayer.add(nArrow);
+
+                nArrow.moveToBottom();
+            };
+            this.updateArrows();
+        }
+
+        N.delNode = (node) => {
+            if (N.next.has(node)) {
+                const n = N.next.get(node);
+                n.arrow.destroy();
+                N.next.delete(node);
+            }
+            this.updateArrows();
+        }
+
+        N.kGroup.on("dragmove", this.updateArrows);
+
+        N.label.on("mouseenter", () => {
+            if (environments[8].activeAction) {
+                return;
+            }
+
+            this.hoverNode = N;
+            N.Box.setAttr("fill", "#d4e0f5");
+        });
+
+        N.label.on("mouseout", () => {
+            if (environments[8].activeAction) {
+                return;
+            }
+
+            this.hoverNode = null;
+            N.Box.setAttr("fill", "#c9daf8");
+        });
+
+        N.kGroup.on("click", () => {
+            if (environments[8].activeAction) {
+                return;
+            }
+
+            N.toggleSelect();
+        });
+
         N.kGroup.add(N.Box);
         N.kGroup.add(N.label);
+        this.nodes.add(N);
 
         return N
     },
 
-    updateDisplay : function(L) {
-        this.displayer.setAttr("text", "Current List: None");
-    },
-
     keyDown : function(key) {
+        if (environments[8].activeAction) {
+            return;
+        }
+
         if (key.length == 1 && key != " " && Number.isFinite(+key)) {
             if (this.isInputHover) {
-                this.input = key.toString();
+                if (Date.now() - this.lastInput < 500) {
+                    this.input = this.input*10 + parseInt(key.toString());
+                } else {
+                    this.input = parseInt(key.toString());
+                }
+                this.lastInput = Date.now();
                 this.boxUpdate();
+            };
+        };
+
+        if (this.selectedNode && this.hoverNode && this.selectedNode != this.hoverNode) {
+            if (key == " " && this.input > 0) {
+                this.selectedNode.addNode(this.hoverNode);
+            } else if (key == "Backspace") {
+                this.selectedNode.delNode(this.hoverNode);
             }
-        }
+        };
     },
     
     start : function() {
-        const starting = this.makeNode();
-
         let buttons = {}
         let hasInput = new Set();
 
@@ -994,6 +2526,144 @@ environments[3] = {
             let n = this.makeNode();
 
             this.layer.add(n.kGroup);
+        };
+
+        const dn = () => {
+            if (this.selectedNode) {
+                const t = environments[8];
+                t.nodes.forEach((node) => {
+                    if (node.next.has(this.selectedNode)) {
+                        const n = node.next.get(this.selectedNode);
+                        n.arrow.destroy();
+                    }
+
+                    if (this.selectedNode.next.has(node)) {
+                        const n = this.selectedNode.next.get(node);
+                        n.arrow.destroy();
+                    }
+                });
+
+                this.selectedNode.kGroup.destroy();
+                this.nodes.delete(this.selectedNode);
+            };
+        };
+
+        buttons.delNode = dn;
+
+        buttons.clear = () => {
+            const t = environments[8];
+            t.nodes.forEach((node) => {
+                node.toggleSelect();
+                dn();
+            });
+        };
+
+        buttons.dfs_traverse = async () => {
+            if (this.selectedNode) {
+                this.activeAction = true
+
+                const indicator = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    stroke : "#666666",
+                    width : 5,
+                });
+
+                this.layer.add(indicator);
+
+                const marked = new Set();
+
+                travel = async (node) => {
+                    if (marked.has(node)) {
+                        return; 
+                    };
+
+                    marked.add(node);
+
+                    indicator.x(node.kGroup.x() + 40);
+                    indicator.y(node.kGroup.y() - 8);
+                    node.Box.fill("#ffffff")
+
+                    await sleep(400);
+
+                    const t = environments[8];
+                    for (const node2 of t.nodes) {
+                        if (node.next.has(node2)) {
+                            await travel(node2);
+                        };
+                    };
+                };
+
+                await travel(this.selectedNode);
+
+                indicator.destroy();
+
+                this.activeAction = false;
+
+                marked.forEach((e) => {
+                    e.Box.fill('#c9daf8');
+                });
+            }
+        };
+
+        const translate = (l) => {
+            let v = ""
+            l.forEach((node) => {
+                v = v + node.label.text() + ", ";
+            });
+            return "Fringe: [" + v.slice(0, -2) + "]";
+        };
+
+        buttons.bfs_traverse = async () => {
+            if (this.selectedNode) {
+                this.activeAction = true
+
+                const indicator = new Konva.Circle({
+                    x : 0,
+                    y : 0,
+                    fill : "#666666",
+                    stroke : "#666666",
+                    width : 5,
+                });
+
+                this.layer.add(indicator);
+
+                const marked = new Set();
+                const fringe = [];
+
+                fringe.push(this.selectedNode);
+                marked.add(this.selectedNode);
+
+                while (fringe[0]) {
+                    this.displayer.text(translate(fringe));
+                    const node = fringe.shift();
+
+                    indicator.x(node.kGroup.x() + 40);
+                    indicator.y(node.kGroup.y() - 8);
+                    node.Box.fill("#ffffff")
+
+                    await sleep(600);
+
+                    const t = environments[8];
+                    for (const node2 of t.nodes) {
+                        if (node.next.has(node2) && !marked.has(node2)) {
+                            marked.add(node2);
+                            fringe.push(node2);
+                        };
+                    };
+                };
+
+                indicator.destroy();
+
+                this.activeAction = false;
+
+                marked.forEach((e) => {
+                    e.Box.fill('#c9daf8');
+                });
+
+                this.displayer.text("Fringe: []");
+            }
         };
 
         let i = 0
@@ -1006,20 +2676,16 @@ environments[3] = {
             newButton.setWidth(140);
             newButton.setHeight(25);
             newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
-            newButton.callback = callback;
+            newButton.callback = () => {
+                if (!this.activeAction) {
+                    callback();
+                };
+            };
             this.uLayer.add(newButton.kGroup);
 
             buttons[key] = newButton;
             i++;
         });
-
-        this.displayer.setAttr("text", "Current List: None");
-        this.displayer.setAttr("x", stage.width()/2 - 280);
-        this.displayer.setAttr("y", stage.height() - 115);
-        this.displayer.setAttr("fill", "#737070");
-        this.displayer.setAttr("fontSize", 13);
-        this.displayer.setAttr("fontStyle", "italic");
-        this.displayer.setAttr("fontFamily", "DM Sans");
 
         const iBox = new Konva.Rect({
             x : stage.width()/2 - 395,
@@ -1043,7 +2709,7 @@ environments[3] = {
         });
 
         const iBoxInput = new Konva.Text({
-            text : "0",
+            text : "1",
             x : stage.width()/2 - 395,
             y : stage.height() - 90,
             width : 90,
@@ -1108,6 +2774,14 @@ environments[3] = {
             oBoxOutput.setAttr("text", this.output.toString());
         };
 
+        this.displayer.setAttr("text", "Fringe: []");
+        this.displayer.setAttr("x", stage.width()/2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
         this.uLayer.add(iBoxText);
         this.uLayer.add(oBoxText);
         this.uLayer.add(iBox);
@@ -1115,8 +2789,23 @@ environments[3] = {
         this.uLayer.add(iBoxInput);
         this.uLayer.add(oBoxOutput);
         this.uLayer.add(this.displayer);
+        
+        const starters = [];
 
-        this.layer.add(starting.kGroup);
+        this.st_nodes.forEach((n) => {
+            const node = this.makeNode();
+            node.kGroup.x(n[0] * 1.75 + 100);
+            node.kGroup.y(n[1] * 1.5);
+            starters.push(node);
+
+            this.uLayer.add(node.kGroup);
+        });
+
+        for (let i = 0; i < this.st_nodes.length; i++) {
+            this.st_nodes[i][2].forEach((e) => {
+                starters[i].addNode(starters[e[0]]);
+            });
+        }
     },
 };
 
@@ -1126,7 +2815,7 @@ const DJ_COL = {
     edgeDefault  : "#666666",
     edgeSettled  : "#222222",
     edgeRelax    : "#e040fb",
-    nodeDefault  : "#b6d7a8",
+    nodeDefault  : "#c9daf8",
     nodeSettled  : "#ffffff",
     nodeCurrent  : "#e040fb",
     distInfinity : "∞",
@@ -1247,7 +2936,7 @@ function djStep(env) {
         const conn = pred.next.get(u);
         conn.arrow.stroke(DJ_COL.edgeSettled);
         conn.arrow.fill (DJ_COL.edgeSettled);
-        conn.arrow.strokeWidth(3);
+        conn.arrow.strokeWidth(3.75);
     }
  
     env.nodes.forEach(v => {
@@ -1347,7 +3036,7 @@ function djRefreshEdgeColors(env) {
                 const conn = from.next.get(to);
                 conn.arrow.stroke(DJ_COL.edgeDefault);
                 conn.arrow.fill (DJ_COL.edgeDefault);
-                conn.arrow.strokeWidth(2);
+                conn.arrow.strokeWidth(1.7);
             }
         });
     });
@@ -1511,7 +3200,7 @@ environments[9] = {
                         ]);
                         connection.arrow.show();
 
-                        connection.txt.x((node.kGroup.x() + p[0] + node2.kGroup.x() + pi[0])/2 - 9);
+                        connection.txt.x((node.kGroup.x() + p[0] + node2.kGroup.x() + pi[0])/2 - 18);
                         connection.txt.y((node.kGroup.y() + p[1] + node2.kGroup.y() + pi[1])/2 - 9);
 
                         connection.cut.x((node.kGroup.x() + p[0] + node2.kGroup.x() + pi[0])/2);
@@ -1532,7 +3221,7 @@ environments[9] = {
             y : 0,
             width : 42,
             height : 32,
-            fill : "#b6d7a8",
+            fill : "#c9daf8",
             stroke : "#666666",
         });
 
@@ -1578,14 +3267,14 @@ environments[9] = {
                 const nArrow = new Konva.Arrow({
                     stroke : "#666666",
                     fill : "#666666",
-                    strokeWidth : 2,
+                    strokeWidth : 1.7,
                     points : [],
                 });
 
                 const nLabel = new Konva.Text({
-                    x : 0,
-                    y : 0,
-                    width : 18,
+                    x : -18,
+                    y : -9,
+                    width : 36,
                     height : 18,
                     text : dist.toString(),
                     fontSize : 18,
@@ -1639,7 +3328,7 @@ environments[9] = {
             }
 
             this.hoverNode = N;
-            N.Box.setAttr("fill", "#cde7c1");
+            N.Box.setAttr("fill", "#d4e0f5");
         });
 
         N.label.on("mouseout", () => {
@@ -1648,7 +3337,7 @@ environments[9] = {
             }
 
             this.hoverNode = null;
-            N.Box.setAttr("fill", "#b6d7a8");
+            N.Box.setAttr("fill", "#c9daf8");
         });
 
         N.kGroup.on("click", () => {
@@ -1687,7 +3376,6 @@ environments[9] = {
             if (key == " " && this.input > 0) {
                 this.selectedNode.addNode(this.hoverNode, this.input);
             } else if (key == "Backspace") {
-                console.log('go');
                 this.selectedNode.delNode(this.hoverNode);
             }
         };
@@ -1857,7 +3545,7 @@ environments[9] = {
 
         this.st_nodes.forEach((n) => {
             const node = this.makeNode();
-            node.kGroup.x(n[0] * 1.5 + 100);
+            node.kGroup.x(n[0] * 1.25 + 100);
             node.kGroup.y(n[1]);
             starters.push(node);
 
