@@ -1057,7 +1057,7 @@ environments[3] = {
         const treeSizes = roots.map(r => this.subtreeWidth(r));
         const totalW    = treeSizes.reduce((a, b) => a + b, 0)
                         + this.TREE_GAP * (roots.length - 1);
-        let startX = stageg.width() / 2 - totalW / 2;
+        let startX = stage.width() / 2 - totalW / 2;
 
         const pos = new Array(this.N);
         for (let ri = 0; ri < roots.length; ri++) {
