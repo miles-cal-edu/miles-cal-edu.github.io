@@ -933,6 +933,7 @@ environments[3] = {
     input        : 0,
     lastInput    : 0,
     output       : "null",
+    hoverNode    : null,
 
     // ── DSU data (negative-weight WQU) ───────────────────────
     // id[i] < 0  →  i is a root, subtree size = -id[i]
@@ -1056,7 +1057,7 @@ environments[3] = {
         const treeSizes = roots.map(r => this.subtreeWidth(r));
         const totalW    = treeSizes.reduce((a, b) => a + b, 0)
                         + this.TREE_GAP * (roots.length - 1);
-        let startX = stage.width() / 2 - totalW / 2;
+        let startX = stageg.width() / 2 - totalW / 2;
 
         const pos = new Array(this.N);
         for (let ri = 0; ri < roots.length; ri++) {
@@ -1161,6 +1162,14 @@ environments[3] = {
             this.refreshEdges();
         });
 
+        obj.label.on("mouseenter", () => {
+            this.hoverNode = obj;
+        });
+
+        obj.label.on("mouseout", () => {
+            this.hoverNode = null;
+        });
+
         obj.kGroup.on("dragend", () => {
             obj._dragPeers   = null;
             this.refreshEdges();
@@ -1189,7 +1198,26 @@ environments[3] = {
                 this.input = parseInt(key);
                 this.boxUpdate();
             }
+        } else if (key == " ") {
+            if (this.hoverNode) {
+                this.connect(this.selected, this.hoverNode.idx)
+            }
         }
+    },
+
+    connect : function(i, j) {
+        if (this.selected === -1) return;
+        const a = i;
+        const b = j;
+        if (b < 0 || b >= this.N) return;
+        const merged = this.union(a, b);
+        this.output = merged ? "connected" : "same set";
+        // re-select to refresh group highlight after merge
+        const rep = this.find(a);
+        this.selected = -1;
+        this.selectGroup(rep);
+        this.reposition();
+        this.boxUpdate();
     },
 
     // ── start ─────────────────────────────────────────────────
@@ -1204,18 +1232,7 @@ environments[3] = {
         const hasInput = new Set(["connect", "isConnected"]);
 
         buttons.connect = () => {
-            if (this.selected === -1) return;
-            const a = this.selected;
-            const b = this.input;
-            if (b < 0 || b >= this.N) return;
-            const merged = this.union(a, b);
-            this.output = merged ? "connected" : "same set";
-            // re-select to refresh group highlight after merge
-            const rep = this.find(a);
-            this.selected = -1;
-            this.selectGroup(rep);
-            this.reposition();
-            this.boxUpdate();
+            this.connect(this.selected, this.input);
         };
 
         buttons.isConnected = () => {
@@ -2086,6 +2103,8 @@ environments[7] = {
         this.heapNodes[i].box.fill(this.COLOR_SETTLE);
         await sleep(380);
         this.heapNodes[i].box.fill(this.COLOR_DEFAULT);
+
+        this.reposition();
 
         this.activeAction = false;
     },
