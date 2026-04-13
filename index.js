@@ -919,6 +919,453 @@ environments[1] = {
     },
 };
 
+// 2 : Circular Arrays
+
+const e2Layer = new Konva.Group(gAttr);
+const e2uLayer = new Konva.Group(gAttr);
+environments[2] = {
+    started      : false,
+    layer        : e2Layer,
+    uLayer       : e2uLayer,
+    displayer    : new Konva.Text({}),
+    isInputHover : false,
+    input        : 0,
+    lastInput    : 0,
+    output       : "null",
+    pauseActions : false,
+
+    // ── data (WQU-free array deque) ──────────────────────────
+    MIN_CAP   : 8,
+    cap       : 8,
+    size      : 0,
+    nextFirst : 7,
+    nextLast  : 0,
+    arr       : null,
+
+    // ── visuals ──────────────────────────────────────────────
+    boxes        : [],
+    nextFirstPtr : new Konva.Text({}),
+    nextLastPtr  : new Konva.Text({}),
+
+    // ── visual constants ─────────────────────────────────────
+    BOX_W   : 54,
+    BOX_H   : 40,
+    BOX_GAP : 4,
+    ARRAY_Y : 150,
+
+    COLOR_EMPTY  : "#ffffff",
+    COLOR_FILLED : "#d9d2e9",
+    COLOR_HIT    : "#efd062",
+    COLOR_REM    : "#e8a0a0",
+
+    boxUpdate : function() {},
+
+    // ── build (or rebuild) the row of boxes ──────────────────
+    buildVisual : function() {
+        this.boxes.forEach(b => b.group.destroy());
+        this.boxes = [];
+
+        const totalW = this.cap * (this.BOX_W + this.BOX_GAP) - this.BOX_GAP;
+        const startX = stage.width() / 2 - totalW / 2;
+
+        for (let i = 0; i < this.cap; i++) {
+            const grp = new Konva.Group({
+                x : startX + i * (this.BOX_W + this.BOX_GAP),
+                y : this.ARRAY_Y,
+            });
+
+            const box = new Konva.Rect({
+                x : 0, y : 0,
+                width       : this.BOX_W,
+                height      : this.BOX_H,
+                fill        : this.COLOR_EMPTY,
+                stroke      : "#666666",
+                strokeWidth : 2,
+            });
+
+            const val = new Konva.Text({
+                x : 0, y : 0,
+                width         : this.BOX_W,
+                height        : this.BOX_H,
+                text          : "",
+                fontSize      : 14,
+                align         : "center",
+                verticalAlign : "middle",
+                fill          : "#252525",
+                fontFamily    : "DM Sans",
+            });
+
+            const idxLabel = new Konva.Text({
+                x : 0, y : this.BOX_H + 2,
+                width      : this.BOX_W,
+                text       : i.toString(),
+                fontSize   : 10,
+                align      : "center",
+                fill       : "#888888",
+                fontFamily : "DM Sans",
+            });
+
+            grp.add(box);
+            grp.add(val);
+            grp.add(idxLabel);
+            this.layer.add(grp);
+            this.boxes.push({ group: grp, box, val, idxLabel });
+        }
+
+        this.nextFirstPtr.moveToTop();
+        this.nextLastPtr.moveToTop();
+        this.updateValues();
+    },
+
+    // ── is this raw index a live (in-list) slot? ────────────
+    isLive : function(i) {
+        if (this.size === 0) return false;
+        const first = (this.nextFirst + 1) % this.cap;
+        const last  = (this.nextLast  - 1 + this.cap) % this.cap;
+        if (first <= last) return i >= first && i <= last;
+        return i >= first || i <= last;
+    },
+
+    // ── refresh slot contents + pointer positions + displayer ─
+    updateValues : function() {
+        for (let i = 0; i < this.cap; i++) {
+            const b = this.boxes[i];
+            b.val.text(this.arr[i].toString());
+            b.box.fill(this.isLive(i) ? this.COLOR_FILLED : this.COLOR_EMPTY);
+        }
+        this.updatePointers();
+        this.updateDisplayer();
+    },
+
+    updatePointers : function() {
+        const fGrp = this.boxes[this.nextFirst].group;
+        this.nextFirstPtr.x(fGrp.x() + this.BOX_W / 2 - 40);
+        this.nextFirstPtr.y(fGrp.y() - 20);
+
+        const lGrp = this.boxes[this.nextLast].group;
+        this.nextLastPtr.x(lGrp.x() + this.BOX_W / 2 - 40);
+        this.nextLastPtr.y(lGrp.y() + this.BOX_H + 18);
+    },
+
+    updateDisplayer : function() {
+        const items = [];
+        for (let i = 0; i < this.size; i++) {
+            const idx = (this.nextFirst + 1 + i) % this.cap;
+            items.push(this.arr[idx]);
+        }
+        this.displayer.setAttr("text", "Current List: [" + items.join(", ") + "]");
+    },
+
+    // ── resize (rebuild internal array in logical order) ─────
+    resize : function(newCap) {
+        const newArr = new Array(newCap).fill(0);
+        for (let i = 0; i < this.size; i++) {
+            const src = (this.nextFirst + 1 + i) % this.cap;
+            newArr[i] = this.arr[src];
+        }
+        this.arr       = newArr;
+        this.cap       = newCap;
+        this.nextFirst = newCap - 1;
+        this.nextLast  = this.size;
+        this.buildVisual();
+    },
+
+    // ── operations ───────────────────────────────────────────
+    addFirst : async function(val) {
+        if (this.pauseActions) return;
+        this.pauseActions = true;
+
+        if (this.size === this.cap) this.resize(this.cap * 2);
+
+        const target = this.nextFirst;
+        this.boxes[target].box.fill(this.COLOR_HIT);
+        await sleep(220);
+
+        this.arr[target] = val;
+        this.nextFirst   = (this.nextFirst - 1 + this.cap) % this.cap;
+        this.size++;
+        this.updateValues();
+
+        this.pauseActions = false;
+    },
+
+    addLast : async function(val) {
+        if (this.pauseActions) return;
+        this.pauseActions = true;
+
+        if (this.size === this.cap) this.resize(this.cap * 2);
+
+        const target = this.nextLast;
+        this.boxes[target].box.fill(this.COLOR_HIT);
+        await sleep(220);
+
+        this.arr[target] = val;
+        this.nextLast    = (this.nextLast + 1) % this.cap;
+        this.size++;
+        this.updateValues();
+
+        this.pauseActions = false;
+    },
+
+    remFirst : async function() {
+        if (this.pauseActions) return;
+        if (this.size === 0) {
+            this.output = "null";
+            this.boxUpdate();
+            return;
+        }
+        this.pauseActions = true;
+
+        const first = (this.nextFirst + 1) % this.cap;
+        this.boxes[first].box.fill(this.COLOR_REM);
+        await sleep(220);
+
+        const v = this.arr[first];
+        this.nextFirst  = first;
+        this.size--;
+        this.output     = v.toString();
+
+        if (this.cap > this.MIN_CAP && this.size * 4 < this.cap) {
+            this.resize(this.cap / 2);
+        } else {
+            this.updateValues();
+        }
+        this.boxUpdate();
+        this.pauseActions = false;
+    },
+
+    remLast : async function() {
+        if (this.pauseActions) return;
+        if (this.size === 0) {
+            this.output = "null";
+            this.boxUpdate();
+            return;
+        }
+        this.pauseActions = true;
+
+        const last = (this.nextLast - 1 + this.cap) % this.cap;
+        this.boxes[last].box.fill(this.COLOR_REM);
+        await sleep(220);
+
+        const v = this.arr[last];
+        this.nextLast  = last;
+        this.size--;
+        this.output    = v.toString();
+
+        if (this.cap > this.MIN_CAP && this.size * 4 < this.cap) {
+            this.resize(this.cap / 2);
+        } else {
+            this.updateValues();
+        }
+        this.boxUpdate();
+        this.pauseActions = false;
+    },
+
+    get : async function(i) {
+        if (this.pauseActions) return;
+        if (i < 0 || i >= this.size) {
+            this.output = "ERROR: bounds";
+            this.boxUpdate();
+            return;
+        }
+        this.pauseActions = true;
+
+        for (let k = 0; k <= i; k++) {
+            const idx = (this.nextFirst + 1 + k) % this.cap;
+            this.boxes[idx].box.fill(this.COLOR_HIT);
+            await sleep(200);
+            if (k < i) this.boxes[idx].box.fill(this.COLOR_FILLED);
+        }
+
+        const finalIdx = (this.nextFirst + 1 + i) % this.cap;
+        this.output = this.arr[finalIdx].toString();
+        this.boxUpdate();
+        await sleep(320);
+        this.updateValues();
+
+        this.pauseActions = false;
+    },
+
+    // ── key handler ──────────────────────────────────────────
+    keyDown : function(key) {
+        if (this.pauseActions) return;
+        if (key.length == 1 && key != " " && Number.isFinite(+key)) {
+            if (this.isInputHover) {
+                if (Date.now() - this.lastInput < 500) {
+                    this.input = this.input * 10 + parseInt(key);
+                } else {
+                    this.input = parseInt(key);
+                }
+                this.lastInput = Date.now();
+                this.boxUpdate();
+            }
+        }
+    },
+
+    // ── start ────────────────────────────────────────────────
+    start : function() {
+        this.arr = new Array(this.cap).fill(0);
+
+        this.nextFirstPtr = new Konva.Text({
+            text       : "nextFirst",
+            width      : 80,
+            fontSize   : 11,
+            align      : "center",
+            fill       : "#a65a5a",
+            fontStyle  : "bold",
+            fontFamily : "DM Sans",
+        });
+        this.nextLastPtr = new Konva.Text({
+            text       : "nextLast",
+            width      : 80,
+            fontSize   : 11,
+            align      : "center",
+            fill       : "#5a7aa6",
+            fontStyle  : "bold",
+            fontFamily : "DM Sans",
+        });
+        this.layer.add(this.nextFirstPtr);
+        this.layer.add(this.nextLastPtr);
+
+        this.buildVisual();
+
+        const buttons = {};
+        buttons.get      = () => this.get(this.input);
+        buttons.addFirst = () => this.addFirst(this.input);
+        buttons.addLast  = () => this.addLast(this.input);
+        buttons.remFirst = () => this.remFirst();
+        buttons.remLast  = () => this.remLast();
+        buttons.size     = () => {
+            this.output = this.size.toString();
+            this.boxUpdate();
+        };
+
+        const hasInput = new Set();
+        hasInput.add("get");
+        hasInput.add("addFirst");
+        hasInput.add("addLast");
+
+        let i = 0;
+        Object.keys(buttons).forEach((key) => {
+            const callback = buttons[key];
+            const newButton = makeButton();
+
+            newButton.setX(stage.width()/2 - 280 + (i % 3)*160);
+            newButton.setY(stage.height() - 90 + Math.floor(i / 3)*35);
+            newButton.setWidth(140);
+            newButton.setHeight(25);
+            newButton.setText(key + (hasInput.has(key) ? "(input)" : "()"));
+            newButton.callback = callback;
+            this.uLayer.add(newButton.kGroup);
+
+            buttons[key] = newButton;
+            i++;
+        });
+
+        this.displayer.setAttr("x", stage.width()/2 - 280);
+        this.displayer.setAttr("y", stage.height() - 115);
+        this.displayer.setAttr("fill", "#737070");
+        this.displayer.setAttr("fontSize", 13);
+        this.displayer.setAttr("fontStyle", "italic");
+        this.displayer.setAttr("fontFamily", "DM Sans");
+
+        const iBox = new Konva.Rect({
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const iBoxText = new Konva.Text({
+            text : "input",
+            x : stage.width()/2 - 395 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const iBoxInput = new Konva.Text({
+            text : "0",
+            x : stage.width()/2 - 395,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        const oBox = new Konva.Rect({
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#c0d4e03f",
+            stroke : "#666666",
+            strokeWidth : 1,
+            cornerRadius : 6,
+        });
+
+        const oBoxText = new Konva.Text({
+            text : "output",
+            x : stage.width()/2 + 205 + 5,
+            y : stage.height() - 105,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+        });
+
+        const oBoxOutput = new Konva.Text({
+            text : "null",
+            x : stage.width()/2 + 205,
+            y : stage.height() - 90,
+            width : 90,
+            height : 30,
+            fill : "#737070",
+            fontSize : 13,
+            fontStyle : "normal",
+            fontFamily : "DM Sans",
+            align : "center",
+            verticalAlign : "middle",
+        });
+
+        iBoxInput.on("mouseenter", () => {
+            this.isInputHover = true;
+            iBox.setAttr("fill", "#c0d4e01e");
+            tooltip.setText("input_box", "Press digits to enter value", 3);
+        });
+
+        iBoxInput.on("mouseout", () => {
+            this.isInputHover = false;
+            iBox.setAttr("fill", "#c0d4e03f");
+            tooltip.delText("input_box");
+        });
+
+        this.boxUpdate = () => {
+            iBoxInput.setAttr("text", this.input.toString());
+            oBoxOutput.setAttr("text", this.output.toString());
+        };
+
+        this.uLayer.add(iBoxText);
+        this.uLayer.add(oBoxText);
+        this.uLayer.add(iBox);
+        this.uLayer.add(oBox);
+        this.uLayer.add(iBoxInput);
+        this.uLayer.add(oBoxOutput);
+        this.uLayer.add(this.displayer);
+    },
+};
+
 // 3 : Disjoint Sets
 
 const e3Layer = new Konva.Group(gAttr);
